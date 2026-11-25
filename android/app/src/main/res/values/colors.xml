@@ -1,0 +1,9 @@
+<resources>
+  <color name="splashscreen_background">#0A0A0C</color>
+  <color name="iconBackground">#0A0A0C</color>
+  <color name="colorPrimary">#B8922E</color>
+  <color name="splash_background">#0A0A0C</color>
+  <color name="splash_ink">#C9A84C</color>
+  <color name="splash_wordmark">#C9A84C</color>
+  <color name="splash_tagline">#A39886</color>
+</resources>

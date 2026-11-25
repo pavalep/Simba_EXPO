@@ -29,6 +29,7 @@ yarn-error.*
 # macOS
 .DS_Store
 *.pem
+!android/app/src/main/assets/mpv/cacert.pem
 
 # local env files & secrets
 .env
@@ -42,6 +43,5 @@ src/constants/env.json
 
 example
 
-# generated native folders
+# generated native folders (android/ is tracked because it contains custom native splash, PiP, libc++_shared fix, and mpv/cacert.pem)
 /ios
-/android
