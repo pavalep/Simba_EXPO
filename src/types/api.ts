@@ -1,0 +1,320 @@
+// ─── Shared API Result Types for Phase 0 Content Integrations ─────────────
+
+import type {MediaKind, MediaLane, MediaSource} from './media';
+
+/** Optional DTO metadata normalized to required fields at durable-state boundaries. */
+export interface ApiMediaClassification {
+  source?: MediaSource;
+  type?: MediaKind;
+  mediaType?: MediaLane;
+  provider?: string;
+}
+
+export interface ApiConfig {
+  baseUrl: string;
+  apiKey?: string;
+  apiSecret?: string;
+  /**
+   * Request timeout in ms. Falls back to the client default (10s).
+   * Slow-cold APIs (e.g. Internet Archive advancedsearch, which takes
+   * >10s on a cold CDN node before its query cache warms) must set a
+   * higher ceiling here — otherwise the first request in a session
+   * times out while the server is still working, and only the retry
+   * (which hits the now-warm cache) succeeds.
+   *
+   * V18.8.2: `rateLimitMs` was removed in V18.8.1 along with the
+   * `rateLimit` helper in `apiClient.ts`. TanStack's retry + dedup
+   * is now the only outbound throttling layer.
+   */
+  timeoutMs?: number;
+}
+
+export interface ApiSearchOptions {
+  page?: number;
+  limit?: number;
+  language?: string;
+  /** Optional provider-specific sort (e.g. Internet Archive "downloads desc"). */
+  sort?: string;
+  /**
+   * Optional provider-specific tag filter.
+   *
+   * Jamendo's `/tracks/` accepts `search` AND `tags` together, and
+   * MEASURED on 2026-11-16 the two are honoured at the same time:
+   * `search=love&tags=rock` returns the rock pool filtered by the term
+   * (`(search+genre) ∩ genre = 3`, `(search+genre) ∩ search = 0`, while
+   * `search ∩ genre = 0`). So a browse screen can keep a genre filter
+   * applied while the user searches, instead of dropping the filter and
+   * leaving a chip that looks applied and is not.
+   */
+  tags?: string;
+}
+
+/**
+ * Paginated response from an Internet Archive advanced search.
+ * `numFound` drives "hasMore" for infinite scroll.
+ */
+export interface PaginatedResult<T> {
+  items: T[];
+  /** Total matching documents across all pages. */
+  numFound: number;
+}
+
+// ─── TVMaze ─────────────────────────────────────────────────────────────
+
+export interface TVMazeShow {
+  id: number;
+  name: string;
+  summary: string;
+  image: {medium: string; original: string} | null;
+  genres: string[];
+  status: string;
+  premiered: string;
+  // ── P38: optional fields surfaced by /shows + /shows/:id ──
+  rating?: {average: number | null} | null;
+  runtime?: number | null;
+  network?: {name: string} | null;
+  type?: string;
+}
+
+export interface TVMazeEpisode {
+  id: number;
+  name: string;
+  season: number;
+  number: number;
+  airdate: string;
+  summary: string;
+  image: {medium: string; original: string} | null;
+}
+
+// ─── MusicBrainz ─────────────────────────────────────────────────────────
+
+export interface MusicBrainzArtist {
+  id: string;
+  name: string;
+  sortName: string;
+  type: string;
+  country: string;
+  disambiguation: string;
+}
+
+export interface MusicBrainzRelease {
+  id: string;
+  title: string;
+  date: string;
+  country: string;
+  status: string;
+  coverArtUrl: string | null;
+}
+
+// ─── P39: release-group detail (recordings) ─────────────────────────────
+
+export interface MusicBrainzRecording {
+  id: string;
+  title: string;
+  length: number;
+}
+
+export interface MusicBrainzReleaseGroupDetail {
+  id: string;
+  title: string;
+  date: string;
+  primaryType: string;
+  coverArtUrl: string | null;
+  recordings: MusicBrainzRecording[];
+}
+
+// ─── Podcast Index ──────────────────────────────────────────────────────
+
+export interface PodcastResult extends ApiMediaClassification {
+  id: number;
+  title: string;
+  author: string;
+  description: string;
+  image: string;
+  feedUrl: string;
+  episodeCount: number;
+  categories: Record<string, string>;
+}
+
+export interface PodcastCategoryResult {
+  id: number;
+  name: string;
+}
+
+export interface PodcastEpisodeResult extends ApiMediaClassification {
+  id: number;
+  title: string;
+  description: string;
+  datePublished: number;
+  duration: number;
+  image: string;
+  feedUrl: string;
+  enclosureUrl: string;
+  enclosureType: string;
+}
+
+// ─── Radio Browser ──────────────────────────────────────────────────────
+
+export interface RadioStationResult extends ApiMediaClassification {
+  id: string;
+  name: string;
+  /**
+   * The resolved stream URL. The radio-browser API returns both
+   * `url` (user-submitted) and `url_resolved` (the actually-playable
+   * URL after redirects). The adapter resolves the two into this
+   * single `url` field so the screen layer never has to pick.
+   */
+  url: string;
+  image: string;
+  tags: string;
+  country: string;
+  language: string;
+  codec: string;
+  bitrate: number;
+  clickCount: number;
+}
+
+// ─── LibriVox ───────────────────────────────────────────────────────────
+
+export interface AudiobookResult extends ApiMediaClassification {
+  id: number;
+  title: string;
+  author: string;
+  description: string;
+  urlZipFile: string;
+  urlLibrivox: string;
+  urlIArchive: string;
+  totalTime: number;
+  language: string;
+}
+
+// ─── Audius ──────────────────────────────────────────────────────────────
+
+export interface AudiusTrackResult extends ApiMediaClassification {
+  id: string;
+  title: string;
+  artistName: string;
+  artistId: string;
+  duration: number;
+  streamUrl: string;
+  artworkUrl: string;
+  description: string;
+}
+
+// ─── IPTV-org ───────────────────────────────────────────────────────────
+
+export interface IPTVChannelResult extends ApiMediaClassification {
+  id: string;
+  name: string;
+  url: string;
+  image: string;
+  country: string;
+  countryCode: string;
+  language: string;
+  /** The category's NAME, as the source spells it ("News"). */
+  category: string;
+  /**
+   * The category's ID — the source's own slug ("news").
+   *
+   * The filter compares THIS, not the name: a deep link arrives with an
+   * id, the sheet's rows are keyed by the id, and the channel's own
+   * group-title is the id. `category` is what the user reads.
+   */
+  categoryId: string;
+  isPlayable: boolean;
+  /**
+   * The request headers the playlist declared for this stream, if any.
+   *
+   * They travel with the channel because they are part of HOW the source
+   * says to fetch it: a provider that checks its own User-Agent needs it
+   * on the request, and it belongs to the stream rather than to the app.
+   */
+  headers?: Record<string, string>;
+}
+
+export interface IPTVCategory {
+  id: string;
+  name: string;
+  channelCount: number;
+}
+
+// ─── Jamendo ────────────────────────────────────────────────────────────
+
+export interface JamendoTrackResult extends ApiMediaClassification {
+  id: number;
+  name: string;
+  artistName: string;
+  albumName: string;
+  duration: number;
+  audioUrl: string;
+  imageUrl: string;
+}
+
+// ─── Internet Archive Audio ──────────────────────────────────────────────
+
+export interface InternetArchiveItemResult extends ApiMediaClassification {
+  identifier: string;
+  title: string;
+  description: string;
+  creator: string;
+  year: string;
+  runtime: string;
+  avgRating: number;
+  downloadCount: number;
+  imageUrl: string;
+  streamingUrl: string;
+  downloadUrls: {format: string; url: string}[];
+}
+
+/** P37: a single streamable audio file inside an archive item (chapter/track). */
+export interface ArchiveTrack extends ApiMediaClassification {
+  name: string;
+  title: string;
+  url: string;
+  lengthSeconds: number;
+  format: string;
+  trackNumber: number;
+}
+
+// ─── Internet Archive Video (Movies) ─────────────────────────────────────
+
+export interface InternetArchiveSubtitleFile {
+  language: string;
+  url: string;
+  format: 'srt' | 'vtt';
+}
+
+export interface InternetArchiveAudioTrack {
+  name: string;
+  url: string;
+  format: string;
+}
+
+export interface InternetArchiveVideoResult extends ApiMediaClassification {
+  identifier: string;
+  title: string;
+  description: string;
+  creator: string;
+  year: string;
+  duration: number;
+  avgRating: number;
+  downloadCount: number;
+  imageUrl: string;
+  /** Direct playable stream URL — populated when details are resolved. */
+  streamingUrl: string;
+  subtitles: InternetArchiveSubtitleFile[];
+  audioTracks: InternetArchiveAudioTrack[];
+  downloadUrls: {format: string; url: string}[];
+}
+
+// ─── Aggregated Search ──────────────────────────────────────────────────
+
+export interface AggregatedSearchResults {
+  podcasts: PodcastResult[];
+  radioStations: RadioStationResult[];
+  audiobooks: AudiobookResult[];
+  iptvChannels: IPTVChannelResult[];
+  jamendoTracks: JamendoTrackResult[];
+  internetArchiveItems: InternetArchiveItemResult[];
+  audiusTracks: AudiusTrackResult[];
+}

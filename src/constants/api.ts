@@ -1,0 +1,77 @@
+// ─── API Endpoint Configuration ─────────────────────────────────────────
+// Base URLs, default params, and per-service settings.
+//
+// V18.8.2: `rateLimitMs` was removed in V18.8.1 along with the
+// `rateLimit` helper in `apiClient.ts`. TanStack's retry + dedup
+// is now the only outbound throttling layer.
+
+import {ENV} from './env';
+
+export const API_CONFIG = {
+  tvmaze: {
+    baseUrl: 'https://api.tvmaze.com',
+  },
+  musicbrainz: {
+    baseUrl: 'https://musicbrainz.org/ws/2',
+    userAgent: 'SimbaMediaPlayer/1.0.0 (paval@simba.app)',
+  },
+  podcastIndex: {
+    baseUrl: 'https://api.podcastindex.org/api/1.0',
+    apiKey: ENV.PODCAST_INDEX_API_KEY,
+    apiSecret: ENV.PODCAST_INDEX_API_SECRET,
+  },
+  radioBrowser: {
+    baseUrl: 'https://de1.api.radio-browser.info',
+  },
+  librivox: {
+    baseUrl: 'https://librivox.org/api/feed/audiobooks',
+  },
+  iptv: {
+    baseUrl: 'https://iptv-org.github.io/api',
+  },
+  // The playlist host — the M3U the source publishes FOR PLAYERS.
+  //
+  // This is the catalogue the app reads: one file in which every entry
+  // carries the id, the logo, the category AND the stream URL. The JSON
+  // API above has no stream URL at all (measured 2026-11-17: 31,843
+  // records, 0 occurrences of `url`), which is why Live TV could never
+  // render a channel from it.
+  //
+  // The playlist is 2.8 MB and GitHub Pages serves it UNCOMPRESSED, so
+  // the 10 s client default can abort a cold fetch on a slow link.
+  iptvPlaylist: {
+    baseUrl: 'https://iptv-org.github.io/iptv',
+    timeoutMs: 30_000,
+  },
+  internetArchive: {
+    baseUrl: 'https://archive.org',
+    // advancedsearch is genuinely slow on a cold CDN node (>10s before
+    // the query cache warms). 10s would abort the FIRST request of a
+    // session (the "first load fails, refresh works" bug) — 30s keeps
+    // the ceiling inside a real query's cold latency.
+    timeoutMs: 30_000,
+  },
+  audius: {
+    baseUrl: 'https://api.audius.co',
+  },
+  // P61: weather greeting on Home. No API keys, fully open source.
+  // All three URLs live here so the weather service doesn't hardcode
+  // anything — it imports from this file like every other service.
+  weather: {
+    /** IP-based geolocation. No longer used — we get coords from
+     *  the device's location service (with permission) or the IANA
+     *  timezone (no permission). Kept as a string for any future
+     *  tool that wants a free geo source. */
+    ipGeo: 'https://ipwho.is/',
+    /** Open-Meteo current-weather endpoint. */
+    forecast: 'https://api.open-meteo.com/v1/forecast',
+    /** Open-Meteo geocoding (city name → lat/lon). */
+    geocoding: 'https://geocoding-api.open-meteo.com/v1/search',
+    /** Last-resort fallback location if every network call fails. */
+    fallbackCity: {
+      name: 'Mumbai',
+      lat: 19.076,
+      lon: 72.8777,
+    },
+  },
+} as const;
