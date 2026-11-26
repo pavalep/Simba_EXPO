@@ -15,9 +15,9 @@ import {MiniPlayerDock} from '../../components/player/MiniPlayerDock';
  * behind its icon ("Active Pill 180ms").
  */
 export default function TabsLayout() {
-  const {colors, radius, typography} = useTheme();
+  const {colors, radius} = useTheme();
   const insets = useSafeAreaInsets();
-  const tabBarHeight = 64 + insets.bottom;
+  const tabBarHeight = 58 + insets.bottom;
 
   const renderTabIcon = (
     activeName: SimbaIconName,
@@ -37,7 +37,7 @@ export default function TabsLayout() {
       ]}>
       <SimbaIcon
         name={focused ? activeName : inactiveName}
-        size={20}
+        size={26}
         color={
           focused ? colors.brand.onPrimaryContainer : color
         }
@@ -50,6 +50,7 @@ export default function TabsLayout() {
       <Tabs
         screenOptions={{
           headerShown: false,
+          tabBarShowLabel: false,
           tabBarButton: ({ref: _ref, ...props}) => (
             <Pressable
               {...(props as React.ComponentProps<typeof Pressable>)}
@@ -59,8 +60,8 @@ export default function TabsLayout() {
           tabBarActiveTintColor: colors.accent.gold,
           tabBarInactiveTintColor: colors.text.tertiary,
           tabBarIconStyle: {
-            width: 56,
-            height: 30,
+            width: 64,
+            height: 38,
           },
           tabBarBackground: () => (
             <LinearGradient
@@ -75,14 +76,13 @@ export default function TabsLayout() {
             right: 0,
             bottom: 0,
             height: tabBarHeight,
-            paddingTop: 6,
-            paddingBottom: Math.max(8, insets.bottom + 4),
+            paddingTop: 10,
+            paddingBottom: Math.max(10, insets.bottom + 6),
             backgroundColor: 'transparent',
             borderTopWidth: StyleSheet.hairlineWidth,
             borderTopColor: colors.border.subtle,
             elevation: 0,
           },
-          tabBarLabelStyle: typography.labelSm,
         }}>
         <Tabs.Screen
           name="index"
@@ -138,8 +138,8 @@ export default function TabsLayout() {
 const styles = StyleSheet.create({
   root: {flex: 1},
   pill: {
-    width: 52,
-    height: 28,
+    width: 64,
+    height: 38,
     alignItems: 'center',
     justifyContent: 'center',
   },

@@ -63,7 +63,10 @@ export function SectionHeader({
             color={resolvedIconColor}
           />
         ) : null}
-        <AppText variant="h3" numberOfLines={1} style={styles.title}>
+        <AppText
+          variant="h3"
+          numberOfLines={1}
+          style={badge ? styles.titleWithBadge : styles.title}>
           {title}
         </AppText>
         {badge ? <Badge label={badge} tone="gold" /> : null}
@@ -77,13 +80,13 @@ export function SectionHeader({
             accessibilityLabel={`${title}: ${action}`}
             style={styles.actionBtn}
             hitSlop={8}>
-            <AppText variant="label" tone="gold" numberOfLines={1}>
-              {action}
+            <AppText variant="label" tone="gold">
+              {action.replace(/ /g, '\u00A0')}
             </AppText>
           </Pressable>
         ) : (
-          <AppText variant="caption" tone="secondary" numberOfLines={1} style={styles.actionBtn}>
-            {action}
+          <AppText variant="caption" tone="secondary" style={styles.actionBtn}>
+            {action.replace(/ /g, '\u00A0')}
           </AppText>
         )
       ) : null}
@@ -105,6 +108,9 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   title: {
+    flex: 1,
+  },
+  titleWithBadge: {
     flexShrink: 1,
   },
   actionBtn: {

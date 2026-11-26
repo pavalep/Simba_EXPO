@@ -5,6 +5,7 @@ import {useRouter} from 'expo-router';
 import {useTheme} from '../../theme/ThemeProvider';
 import {useSimbaStore} from '../../state/useSimbaStore';
 import {useHomeFeed} from '../../hooks/useHomeFeed';
+import {useCatalogueBrowse} from '../../hooks/useCatalogueBrowse';
 import {
   registerLiveItems,
   useSimbaPlayback,
@@ -66,22 +67,6 @@ export function ExploreScreen() {
   const {playCatalogueItem} = useSimbaPlayback();
   const homeFeed = useHomeFeed();
 
-  const livePool = useMemo(
-    () => [
-      ...homeFeed.movies,
-      ...homeFeed.podcasts,
-      ...homeFeed.music,
-      ...homeFeed.radio,
-    ],
-    [homeFeed.movies, homeFeed.podcasts, homeFeed.music, homeFeed.radio],
-  );
-
-  useEffect(() => {
-    if (livePool.length > 0) {
-      registerLiveItems(livePool);
-    }
-  }, [livePool]);
-
   const [selectedScope, setSelectedScope] = useState<string>('all');
   const [searchText, setSearchText] = useState('');
   const [searchFocused, setSearchFocused] = useState(false);
@@ -90,6 +75,51 @@ export function ExploreScreen() {
     scope: ['all'],
     sort: ['popular'],
   });
+
+  // Fetch live items for the active Explore tab when a specific category is selected
+  // (covers all 8 lanes: movies, shows, podcasts, music, radio, livetv, audiobooks, archive).
+  const scopedBrowse = useCatalogueBrowse({
+    laneId: selectedScope === 'all' ? 'movies' : selectedScope,
+    searchQuery: '',
+    selectedChip: 'Popular',
+    sortKey: 'Popular',
+    enabled: selectedScope !== 'all',
+  });
+
+  const livePool = useMemo(() => {
+    if (selectedScope !== 'all') {
+      if (scopedBrowse.items.length > 0) {
+        return scopedBrowse.items;
+      }
+      // Fallback to already-warm homeFeed items for that scope while scopedBrowse loads
+      const homePool = [
+        ...homeFeed.movies,
+        ...homeFeed.podcasts,
+        ...homeFeed.music,
+        ...homeFeed.radio,
+      ];
+      return homePool.filter(i => i.catalogueLaneId === selectedScope);
+    }
+    return [
+      ...homeFeed.movies,
+      ...homeFeed.podcasts,
+      ...homeFeed.music,
+      ...homeFeed.radio,
+    ];
+  }, [
+    selectedScope,
+    scopedBrowse.items,
+    homeFeed.movies,
+    homeFeed.podcasts,
+    homeFeed.music,
+    homeFeed.radio,
+  ]);
+
+  useEffect(() => {
+    if (livePool.length > 0) {
+      registerLiveItems(livePool);
+    }
+  }, [livePool]);
 
   const activeLane = useMemo(
     () => catalogueLanes.find(l => l.id === selectedScope) ?? null,
@@ -100,11 +130,8 @@ export function ExploreScreen() {
     if (livePool.length === 0) {
       return null;
     }
-    if (selectedScope === 'all') {
-      return livePool[0] ?? null;
-    }
-    return livePool.find(i => i.catalogueLaneId === selectedScope) ?? livePool[0] ?? null;
-  }, [selectedScope, livePool]);
+    return livePool[0] ?? null;
+  }, [livePool]);
 
   const isShowcaseBookmarked = useMemo(
     () => (showcaseItem ? bookmarks.some(b => b.itemId === showcaseItem.id) : false),

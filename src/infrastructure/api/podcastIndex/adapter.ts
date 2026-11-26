@@ -214,49 +214,19 @@ function parseRawFeed(raw: unknown, path: string): RawFeed {
   };
 }
 
-/** V21 W6 P21 (T21.02): validate a single RawEpisode object's shape. */
+/** V21 W6 P21 (T21.02): validate a single RawEpisode object's shape (tolerant of nullable optional metadata). */
 function parseRawEpisode(raw: unknown, path: string): RawEpisode {
   const rec = assertShape(raw, path, 'podcastIndex', isRecord);
   return {
     id: assertShape(rec.id, `${path}.id`, 'podcastIndex', isFiniteNumber),
-    title: assertShape(rec.title, `${path}.title`, 'podcastIndex', isString),
-    description: assertShape(
-      rec.description,
-      `${path}.description`,
-      'podcastIndex',
-      isString,
-    ),
-    datePublished: assertShape(
-      rec.datePublished,
-      `${path}.datePublished`,
-      'podcastIndex',
-      isFiniteNumber,
-    ),
-    duration: assertShape(
-      rec.duration,
-      `${path}.duration`,
-      'podcastIndex',
-      isFiniteNumber,
-    ),
-    image: assertShape(rec.image, `${path}.image`, 'podcastIndex', isString),
-    feedUrl: assertShape(
-      rec.feedUrl,
-      `${path}.feedUrl`,
-      'podcastIndex',
-      isString,
-    ),
-    enclosureUrl: assertShape(
-      rec.enclosureUrl,
-      `${path}.enclosureUrl`,
-      'podcastIndex',
-      isString,
-    ),
-    enclosureType: assertShape(
-      rec.enclosureType,
-      `${path}.enclosureType`,
-      'podcastIndex',
-      isString,
-    ),
+    title: isString(rec.title) && rec.title.length > 0 ? rec.title : 'Untitled Episode',
+    description: isString(rec.description) ? rec.description : '',
+    datePublished: isFiniteNumber(rec.datePublished) ? rec.datePublished : 0,
+    duration: isFiniteNumber(rec.duration) ? rec.duration : 0,
+    image: isString(rec.image) ? rec.image : '',
+    feedUrl: isString(rec.feedUrl) ? rec.feedUrl : '',
+    enclosureUrl: isString(rec.enclosureUrl) ? rec.enclosureUrl : '',
+    enclosureType: isString(rec.enclosureType) ? rec.enclosureType : 'audio/mpeg',
   };
 }
 

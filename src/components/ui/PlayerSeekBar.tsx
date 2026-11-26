@@ -1,9 +1,9 @@
-import React, {useEffect, useMemo, useRef, useState} from 'react';
+import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import {
   Animated,
   Easing,
+  GestureResponderEvent,
   LayoutChangeEvent,
-  Pressable,
   StyleSheet,
   View,
 } from 'react-native';
@@ -65,8 +65,10 @@ export interface PlayerSeekBarProps {
   cacheRanges?: readonly CacheRange[];
   /** Whether the stream is currently preparing or buffering. */
   isBuffering?: boolean;
-  /** Called with a normalized `[0, 1]` fraction when the user taps the bar. */
+  /** Called with a normalized `[0, 1]` fraction when the user finishes tapping or dragging. */
   onSeekFraction?: (fraction: number) => void;
+  /** Optional live preview callback while the user drags (`null` when released). */
+  onScrubFraction?: (fraction: number | null) => void;
   accessibilityLabel?: string;
 }
 
@@ -74,8 +76,8 @@ export interface PlayerSeekBarProps {
  * YouTube / Netflix / Apple Music grade seek bar with:
  * - Translucent base track
  * - Distinct cached buffer islands (`demuxer-cache-state`)
- * - Warm gold played fill
- * - Crisp 13dp circular playhead thumb dot
+ * - Warm gold played fill in exact pixel lockstep with playhead thumb
+ * - Smooth tap + horizontal finger-drag scrubbing with live preview
  * - Subtle buffering shimmer sweep when stalled
  */
 export function PlayerSeekBar({
@@ -84,10 +86,15 @@ export function PlayerSeekBar({
   cacheRanges,
   isBuffering = false,
   onSeekFraction,
+  onScrubFraction,
   accessibilityLabel = 'Seek timeline',
 }: PlayerSeekBarProps) {
   const {colors} = useTheme();
   const [barWidth, setBarWidth] = useState(0);
+  const [dragFraction, setDragFraction] = useState<number | null>(null);
+  const barWidthRef = useRef(0);
+  barWidthRef.current = barWidth;
+  const dragFractionRef = useRef<number | null>(null);
   const pulse = useRef(new Animated.Value(0.35)).current;
 
   useEffect(() => {
@@ -116,7 +123,8 @@ export function PlayerSeekBar({
     return () => loop.stop();
   }, [isBuffering, pulse]);
 
-  const clamped = Math.min(1, Math.max(0, progress));
+  const effectiveProgress = dragFraction ?? progress;
+  const clamped = Math.min(1, Math.max(0, effectiveProgress));
   const bufferedSegments = useMemo(
     () => deriveBufferedSegments(cacheRanges, durationMs),
     [cacheRanges, durationMs],
@@ -128,22 +136,77 @@ export function PlayerSeekBar({
     }
   };
 
-  const thumbLeft = barWidth > 0 ? Math.max(0, Math.min(barWidth - 13, clamped * barWidth - 6.5)) : 0;
+  const xToFraction = useCallback((x: number) => {
+    const w = barWidthRef.current;
+    if (w <= 0) {
+      return 0;
+    }
+    return Math.min(1, Math.max(0, x / w));
+  }, []);
 
-  return (
-    <Pressable
-      onLayout={handleLayout}
-      onPress={e => {
-        if (!onSeekFraction || barWidth <= 0) {
+  const canSeek = Boolean(onSeekFraction);
+  const responder = useMemo(
+    () => ({
+      onStartShouldSetResponder: () => canSeek,
+      onMoveShouldSetResponder: () => canSeek,
+      onResponderTerminationRequest: () => false,
+      onResponderGrant: (e: GestureResponderEvent) => {
+        if (!canSeek) {
           return;
         }
-        const ratio = Math.min(1, Math.max(0, e.nativeEvent.locationX / barWidth));
-        onSeekFraction(ratio);
-      }}
+        const ratio = xToFraction(e.nativeEvent.locationX);
+        dragFractionRef.current = ratio;
+        setDragFraction(ratio);
+        onScrubFraction?.(ratio);
+      },
+      onResponderMove: (e: GestureResponderEvent) => {
+        if (!canSeek) {
+          return;
+        }
+        const ratio = xToFraction(e.nativeEvent.locationX);
+        dragFractionRef.current = ratio;
+        setDragFraction(ratio);
+        onScrubFraction?.(ratio);
+      },
+      onResponderRelease: (e: GestureResponderEvent) => {
+        if (!canSeek) {
+          return;
+        }
+        const ratio =
+          barWidthRef.current > 0
+            ? xToFraction(e.nativeEvent.locationX)
+            : (dragFractionRef.current ?? clamped);
+        dragFractionRef.current = null;
+        setDragFraction(null);
+        onScrubFraction?.(null);
+        onSeekFraction?.(ratio);
+      },
+      onResponderTerminate: () => {
+        dragFractionRef.current = null;
+        setDragFraction(null);
+        onScrubFraction?.(null);
+      },
+    }),
+    [canSeek, clamped, onScrubFraction, onSeekFraction, xToFraction],
+  );
+
+  const isDragging = dragFraction != null;
+  const thumbSize = isDragging ? 16 : 13;
+  const playedPx = barWidth > 0 ? clamped * barWidth : 0;
+  const thumbLeft =
+    barWidth > 0
+      ? Math.max(0, Math.min(barWidth - thumbSize, playedPx - thumbSize / 2))
+      : 0;
+
+  return (
+    <View
+      onLayout={handleLayout}
+      {...responder}
       accessibilityRole="adjustable"
       accessibilityLabel={accessibilityLabel}
       style={styles.hitArea}>
       <View
+        pointerEvents="none"
         style={[
           styles.track,
           {backgroundColor: colors.background.seekTrack.empty},
@@ -191,7 +254,7 @@ export function PlayerSeekBar({
           style={[
             styles.played,
             {
-              width: `${Math.round(clamped * 1000) / 10}%`,
+              width: barWidth > 0 ? playedPx : `${clamped * 100}%`,
               backgroundColor: colors.accent.gold,
             },
           ]}
@@ -206,12 +269,15 @@ export function PlayerSeekBar({
             styles.thumb,
             {
               left: thumbLeft,
+              width: thumbSize,
+              height: thumbSize,
+              borderRadius: thumbSize / 2,
               backgroundColor: colors.accent.gold,
             },
           ]}
         />
       ) : null}
-    </Pressable>
+    </View>
   );
 }
 

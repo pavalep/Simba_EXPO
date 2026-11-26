@@ -89,7 +89,7 @@ android {
 
     namespace 'app.simba.player'
     defaultConfig {
-        applicationId 'app.simba.player'
+        applicationId 'com.simba.player'
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1
@@ -275,4 +275,8 @@ androidComponents {
             }
         }
     }
+}
+
+if (file("google-services.json").exists()) {
+    apply plugin: "com.google.gms.google-services"
 }

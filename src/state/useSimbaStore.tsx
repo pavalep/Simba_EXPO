@@ -1,4 +1,12 @@
-import React, {createContext, useCallback, useContext, useMemo, useState} from 'react';
+import React, {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import type {KindIconName} from '../components/ui';
 import {
   autoDeleteOptions,
@@ -9,6 +17,21 @@ import {
   type LinkedFolderRecord,
   type SavedBookmarkRecord,
 } from '../data/dummy';
+import {
+  GUEST_PROFILE_ID,
+  GUEST_PROFILE_META,
+  loadProfileRegistry,
+  loadProfileSnapshot,
+  makeUserProfileId,
+  saveProfileRegistry,
+  saveProfileSnapshot,
+  type PersistedProfileSnapshot,
+  type ProfilePreferences,
+  type UserProfileMeta,
+} from '../infrastructure/persistence/profileStorage';
+import {signInSilently} from '../services/authService';
+
+export type {ProfilePreferences, UserProfileMeta};
 
 export interface FollowedPodcastRecord {
   id: string;
@@ -41,9 +64,21 @@ export type AddToPlaylistResult =
     };
 
 export interface SimbaState {
-  // Auth & Profile
+  // Auth & Multi-Profile State
   signedIn: boolean;
   setSignedIn: (value: boolean) => void;
+  activeProfile: UserProfileMeta;
+  savedProfiles: UserProfileMeta[];
+  signInAsProfile: (
+    name: string,
+    email: string,
+    googleId?: string,
+    photo?: string | null,
+  ) => void;
+  switchProfile: (profileId: string) => void;
+  signOut: () => void;
+  preferences: ProfilePreferences;
+  updatePreferences: (patch: Partial<ProfilePreferences>) => void;
   selectedTopics: string[];
   toggleTopic: (id: string) => void;
 
@@ -133,14 +168,34 @@ export interface SimbaState {
 const SimbaStoreContext = createContext<SimbaState | null>(null);
 
 export function SimbaStoreProvider({children}: {children: React.ReactNode}) {
-  const [signedIn, setSignedIn] = useState(false);
-  const [selectedTopics, setSelectedTopics] = useState<string[]>([
-    'tech',
-    'music',
-    'cinema',
-  ]);
+  const initialRegistry = useMemo(() => loadProfileRegistry(), []);
+  const initialSnapshot = useMemo(
+    () => loadProfileSnapshot(initialRegistry.activeProfileId, eqPresets.Flat),
+    [initialRegistry.activeProfileId],
+  );
 
-  // Player & Dock — starts clean with no fake playback
+  const [savedProfiles, setSavedProfiles] = useState<UserProfileMeta[]>(
+    initialRegistry.profiles,
+  );
+  const [activeProfileId, setActiveProfileId] = useState<string>(
+    initialRegistry.activeProfileId,
+  );
+
+  const activeProfile = useMemo<UserProfileMeta>(
+    () =>
+      savedProfiles.find(p => p.id === activeProfileId) ?? GUEST_PROFILE_META,
+    [savedProfiles, activeProfileId],
+  );
+  const signedIn = !activeProfile.isGuest;
+
+  const [selectedTopics, setSelectedTopics] = useState<string[]>(
+    initialSnapshot.selectedTopics,
+  );
+  const [preferences, setPreferences] = useState<ProfilePreferences>(
+    initialSnapshot.preferences,
+  );
+
+  // Player & Dock — session-scoped, starts clean with no fake playback
   const [nowPlaying, setNowPlaying] = useState<CatalogueItem | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [positionSeconds, setPositionSeconds] = useState(0);
@@ -148,35 +203,239 @@ export function SimbaStoreProvider({children}: {children: React.ReactNode}) {
   const [dockVisible, setDockVisible] = useState(false);
   const [activeLiveChannelId, setActiveLiveChannelId] = useState('');
 
-  // Queue & History — starts empty until the user actually plays or queues media
+  // Queue & History — history persisted per profile
   const [queue, setQueue] = useState<CatalogueItem[]>([]);
   const [prevQueueSnapshot, setPrevQueueSnapshot] = useState<CatalogueItem[] | null>(
     null,
   );
   const [undoMessage, setUndoMessage] = useState<string | null>(null);
-  const [history, setHistory] = useState<CatalogueItem[]>([]);
+  const [history, setHistory] = useState<CatalogueItem[]>(initialSnapshot.history);
 
-  // Search recent — starts empty until the user actually searches
-  const [recentSearches, setRecentSearches] = useState<string[]>([]);
+  // Search recent — persisted per profile
+  const [recentSearches, setRecentSearches] = useState<string[]>(
+    initialSnapshot.recentSearches,
+  );
 
-  // Library collections — all start empty until the user actually saves/follows/creates
-  const [bookmarks, setBookmarks] = useState<SavedBookmarkRecord[]>([]);
-  const [playlistsList, setPlaylistsList] = useState<PlaylistRecord[]>([]);
+  // Library collections — persisted per profile
+  const [bookmarks, setBookmarks] = useState<SavedBookmarkRecord[]>(
+    initialSnapshot.bookmarks,
+  );
+  const [playlistsList, setPlaylistsList] = useState<PlaylistRecord[]>(
+    initialSnapshot.playlistsList,
+  );
   const [mixes] = useState<CuratedMixRecord[]>([]);
-  const [pinnedMixIds, setPinnedMixIds] = useState<string[]>([]);
-  const [podcastsList, setPodcastsList] = useState<FollowedPodcastRecord[]>([]);
-  const [favoriteRadioIds, setFavoriteRadioIds] = useState<string[]>([]);
-  const [favoriteTvIds, setFavoriteTvIds] = useState<string[]>([]);
+  const [pinnedMixIds, setPinnedMixIds] = useState<string[]>(
+    initialSnapshot.pinnedMixIds,
+  );
+  const [podcastsList, setPodcastsList] = useState<FollowedPodcastRecord[]>(
+    initialSnapshot.podcastsList,
+  );
+  const [favoriteRadioIds, setFavoriteRadioIds] = useState<string[]>(
+    initialSnapshot.favoriteRadioIds,
+  );
+  const [favoriteTvIds, setFavoriteTvIds] = useState<string[]>(
+    initialSnapshot.favoriteTvIds,
+  );
 
-  // Equalizer
-  const [eqPreset, setEqPreset] = useState<string>('Flat');
-  const [eqGains, setEqGains] = useState<number[]>(eqPresets.Flat);
+  // Equalizer — persisted per profile
+  const [eqPreset, setEqPreset] = useState<string>(initialSnapshot.eqPreset);
+  const [eqGains, setEqGains] = useState<number[]>(initialSnapshot.eqGains);
 
-  // Downloads & Folders — starts empty
-  const [downloads, setDownloads] = useState<DownloadRecord[]>([]);
-  const [autoDeletePolicy, setAutoDeletePolicy] =
-    useState<(typeof autoDeleteOptions)[number]>('After 30 days');
-  const [linkedFolders, setLinkedFolders] = useState<LinkedFolderRecord[]>([]);
+  // Downloads & Folders — persisted per profile
+  const [downloads, setDownloads] = useState<DownloadRecord[]>(
+    initialSnapshot.downloads,
+  );
+  const [autoDeletePolicy, setAutoDeletePolicy] = useState<
+    (typeof autoDeleteOptions)[number]
+  >(
+    (autoDeleteOptions.includes(
+      initialSnapshot.autoDeletePolicy as (typeof autoDeleteOptions)[number],
+    )
+      ? initialSnapshot.autoDeletePolicy
+      : 'After 30 days') as (typeof autoDeleteOptions)[number],
+  );
+  const [linkedFolders, setLinkedFolders] = useState<LinkedFolderRecord[]>(
+    initialSnapshot.linkedFolders,
+  );
+
+  const buildCurrentSnapshot = useCallback(
+    (): PersistedProfileSnapshot => ({
+      selectedTopics,
+      history,
+      recentSearches,
+      bookmarks,
+      playlistsList,
+      pinnedMixIds,
+      podcastsList,
+      favoriteRadioIds,
+      favoriteTvIds,
+      eqPreset,
+      eqGains,
+      downloads,
+      autoDeletePolicy,
+      linkedFolders,
+      preferences,
+    }),
+    [
+      selectedTopics,
+      history,
+      recentSearches,
+      bookmarks,
+      playlistsList,
+      pinnedMixIds,
+      podcastsList,
+      favoriteRadioIds,
+      favoriteTvIds,
+      eqPreset,
+      eqGains,
+      downloads,
+      autoDeletePolicy,
+      linkedFolders,
+      preferences,
+    ],
+  );
+
+  const applySnapshot = useCallback((snap: PersistedProfileSnapshot) => {
+    setSelectedTopics(snap.selectedTopics);
+    setHistory(snap.history);
+    setRecentSearches(snap.recentSearches);
+    setBookmarks(snap.bookmarks);
+    setPlaylistsList(snap.playlistsList);
+    setPinnedMixIds(snap.pinnedMixIds);
+    setPodcastsList(snap.podcastsList);
+    setFavoriteRadioIds(snap.favoriteRadioIds);
+    setFavoriteTvIds(snap.favoriteTvIds);
+    setEqPreset(snap.eqPreset);
+    setEqGains(snap.eqGains);
+    setDownloads(snap.downloads);
+    setAutoDeletePolicy(
+      (autoDeleteOptions.includes(
+        snap.autoDeletePolicy as (typeof autoDeleteOptions)[number],
+      )
+        ? snap.autoDeletePolicy
+        : 'After 30 days') as (typeof autoDeleteOptions)[number],
+    );
+    setLinkedFolders(snap.linkedFolders);
+    setPreferences(snap.preferences);
+  }, []);
+
+  // Auto-persist active profile on changes (debounced 250ms)
+  const isFirstRenderRef = useRef(true);
+  useEffect(() => {
+    if (isFirstRenderRef.current) {
+      isFirstRenderRef.current = false;
+      return;
+    }
+    const timer = setTimeout(() => {
+      saveProfileSnapshot(activeProfileId, buildCurrentSnapshot());
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [activeProfileId, buildCurrentSnapshot]);
+
+  const switchProfile = useCallback(
+    (targetProfileId: string) => {
+      if (targetProfileId === activeProfileId) {
+        return;
+      }
+      // Flush current profile before switching
+      saveProfileSnapshot(activeProfileId, buildCurrentSnapshot());
+      const nextSnap = loadProfileSnapshot(targetProfileId, eqPresets.Flat);
+      applySnapshot(nextSnap);
+      setActiveProfileId(targetProfileId);
+      saveProfileRegistry({
+        activeProfileId: targetProfileId,
+        profiles: savedProfiles,
+      });
+    },
+    [activeProfileId, buildCurrentSnapshot, applySnapshot, savedProfiles],
+  );
+
+  const signInAsProfile = useCallback(
+    (
+      name: string,
+      email: string,
+      googleId?: string,
+      photo?: string | null,
+    ) => {
+      const cleanEmail = email.trim().toLowerCase();
+      const cleanName =
+        name.trim() ||
+        (cleanEmail.includes('@') ? cleanEmail.split('@')[0] : 'Member');
+      const profileId = googleId
+        ? `google_${googleId.replace(/[^a-zA-Z0-9_-]/g, '_')}`
+        : makeUserProfileId(cleanEmail || cleanName);
+
+      // Flush current profile before switching
+      saveProfileSnapshot(activeProfileId, buildCurrentSnapshot());
+
+      const nextMeta: UserProfileMeta = {
+        id: profileId,
+        name: cleanName,
+        email: cleanEmail || undefined,
+        photo: photo ?? null,
+        isGuest: false,
+      };
+
+      const nextProfiles = savedProfiles.some(p => p.id === profileId)
+        ? savedProfiles.map(p => (p.id === profileId ? nextMeta : p))
+        : [...savedProfiles, nextMeta];
+
+      const nextSnap = loadProfileSnapshot(profileId, eqPresets.Flat);
+      applySnapshot(nextSnap);
+      setSavedProfiles(nextProfiles);
+      setActiveProfileId(profileId);
+      saveProfileRegistry({
+        activeProfileId: profileId,
+        profiles: nextProfiles,
+      });
+    },
+    [activeProfileId, buildCurrentSnapshot, applySnapshot, savedProfiles],
+  );
+
+  const signOut = useCallback(() => {
+    switchProfile(GUEST_PROFILE_ID);
+  }, [switchProfile]);
+
+  // Silent Google Sign-In restore on app start (non-blocking, offline-safe)
+  const silentCheckedRef = useRef(false);
+  useEffect(() => {
+    if (silentCheckedRef.current) {
+      return;
+    }
+    silentCheckedRef.current = true;
+    void signInSilently().then(result => {
+      if (result.status === 'restored') {
+        signInAsProfile(
+          result.user.name,
+          result.user.email,
+          result.user.id,
+          result.user.photo,
+        );
+      } else if (result.status === 'expired') {
+        switchProfile(GUEST_PROFILE_ID);
+      }
+    });
+  }, [signInAsProfile, switchProfile]);
+
+  const setSignedIn = useCallback(
+    (value: boolean) => {
+      if (!value) {
+        signOut();
+      } else {
+        const existingUser = savedProfiles.find(p => !p.isGuest);
+        if (existingUser) {
+          switchProfile(existingUser.id);
+        } else {
+          signInAsProfile('Member', 'member@simba.app');
+        }
+      }
+    },
+    [savedProfiles, signInAsProfile, signOut, switchProfile],
+  );
+
+  const updatePreferences = useCallback((patch: Partial<ProfilePreferences>) => {
+    setPreferences(prev => ({...prev, ...patch}));
+  }, []);
 
   const toggleTopic = useCallback((id: string) => {
     setSelectedTopics(prev =>
@@ -516,6 +775,13 @@ export function SimbaStoreProvider({children}: {children: React.ReactNode}) {
     () => ({
       signedIn,
       setSignedIn,
+      activeProfile,
+      savedProfiles,
+      signInAsProfile,
+      switchProfile,
+      signOut,
+      preferences,
+      updatePreferences,
       selectedTopics,
       toggleTopic,
       nowPlaying,
@@ -580,6 +846,14 @@ export function SimbaStoreProvider({children}: {children: React.ReactNode}) {
     }),
     [
       signedIn,
+      setSignedIn,
+      activeProfile,
+      savedProfiles,
+      signInAsProfile,
+      switchProfile,
+      signOut,
+      preferences,
+      updatePreferences,
       selectedTopics,
       toggleTopic,
       nowPlaying,

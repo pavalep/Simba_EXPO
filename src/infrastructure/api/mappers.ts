@@ -134,7 +134,10 @@ export function mapPodcastToItem(pod: PodcastResult): CatalogueItem {
     externalId: String(pod.id),
     title: pod.title,
     subtitle: pod.author || 'Podcast',
-    meta: `${pod.episodeCount ?? 0} episodes`,
+    meta:
+      pod.episodeCount && pod.episodeCount > 0
+        ? `${pod.episodeCount} episodes`
+        : firstCat || 'Podcast',
     kind: 'podcast',
     catalogueLaneId: 'podcasts',
     lane: 'audio',
@@ -288,6 +291,15 @@ export function mapAudiobookToItem(b: AudiobookResult): CatalogueItem {
   };
 }
 
+async function withRetryOnce<T>(fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn();
+  } catch {
+    await new Promise<void>(r => setTimeout(() => r(), 600));
+    return await fn();
+  }
+}
+
 /**
  * Resolves a direct playable stream URL for items whose listing API does not
  * return a direct media file URL (e.g. Internet Archive movies/audio require
@@ -310,7 +322,9 @@ export async function resolvePlayableStreamUrl(
     item.lane === 'video' &&
     item.externalId
   ) {
-    const details = await getInternetArchiveVideoDetails(item.externalId);
+    const details = await withRetryOnce(() =>
+      getInternetArchiveVideoDetails(item.externalId!),
+    );
     if (details?.streamingUrl && !isArchiveDirectoryUrl(details.streamingUrl)) {
       return {url: details.streamingUrl};
     }
@@ -322,7 +336,7 @@ export async function resolvePlayableStreamUrl(
     item.lane === 'audio' &&
     item.externalId
   ) {
-    const tracks = await getArchiveTracks(item.externalId);
+    const tracks = await withRetryOnce(() => getArchiveTracks(item.externalId!));
     if (tracks[0]?.url) {
       return {url: tracks[0].url};
     }
@@ -332,7 +346,7 @@ export async function resolvePlayableStreamUrl(
   if (item.provider === 'PodcastIndex' && item.externalId) {
     const feedId = Number(item.externalId);
     if (Number.isFinite(feedId) && feedId > 0) {
-      const eps = await getEpisodes(feedId, 5);
+      const eps = await withRetryOnce(() => getEpisodes(feedId, 5));
       const firstPlayable = eps.find(e => e.enclosureUrl?.startsWith('http'));
       if (firstPlayable?.enclosureUrl) {
         return {url: firstPlayable.enclosureUrl};

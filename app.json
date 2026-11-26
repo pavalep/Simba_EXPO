@@ -12,7 +12,7 @@
       "bundleIdentifier": "app.simba.player"
     },
     "android": {
-      "package": "app.simba.player",
+      "package": "com.simba.player",
       "adaptiveIcon": {
         "backgroundColor": "#0A0A0C",
         "foregroundImage": "./assets/images/android-icon-foreground.png",

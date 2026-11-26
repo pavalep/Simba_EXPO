@@ -15,15 +15,14 @@ import {
   Button,
   CatalogueGridShimmer,
   CatalogueListShimmer,
-  Chip,
   FilterIconButton,
   FilterSheet,
   IconButton,
   MediaArtwork,
-  Rail,
   Screen,
   Sheet,
   Surface,
+  type FilterGroup,
 } from '../ui';
 import {
   catalogueLanes,
@@ -72,6 +71,7 @@ export function CatalogueBrowseScreen({
   );
 
   const [searchQuery, setSearchQuery] = useState('');
+  const [searchFocused, setSearchFocused] = useState(false);
   const [selectedChip, setSelectedChip] = useState<string>(lane.filters[0] ?? 'Popular');
   const [onlyFavorites, setOnlyFavorites] = useState(false);
   const [filterVisible, setFilterVisible] = useState(false);
@@ -79,6 +79,32 @@ export function CatalogueBrowseScreen({
   const [actionItem, setActionItem] = useState<CatalogueItem | null>(null);
   const [playlistTargetItem, setPlaylistTargetItem] =
     useState<CatalogueItem | null>(null);
+
+  // Reset per-lane filters whenever the user enters a different dedicated catalogue
+  useEffect(() => {
+    setSearchQuery('');
+    setSearchFocused(false);
+    setSelectedChip(lane.filters[0] ?? 'Popular');
+    setOnlyFavorites(false);
+    setGroupSelections({});
+  }, [lane.id, lane.filters]);
+
+  // Ensure all lane genre chips live inside the FilterSheet (never cluttering the top bar)
+  const filterGroups = useMemo<FilterGroup[]>(() => {
+    const existingHasGenre = lane.filterGroups.some(g =>
+      ['genre', 'category', 'browse', 'topic', 'tag', 'status'].includes(g.id),
+    );
+    if (existingHasGenre || lane.filters.length === 0) {
+      return lane.filterGroups;
+    }
+    const genreGroup: FilterGroup = {
+      id: 'browse',
+      title: 'Genre & Mood',
+      multiSelect: false,
+      options: lane.filters.map(f => ({key: f, label: f})),
+    };
+    return [genreGroup, ...lane.filterGroups];
+  }, [lane.filterGroups, lane.filters]);
 
   const sortKey = useMemo(() => {
     const sortSelection = groupSelections.sort?.[0];
@@ -175,134 +201,145 @@ export function CatalogueBrowseScreen({
           {lane.subtitle}
         </AppText>
       </View>
-      {lane.hasFavorites ? (
-        <Pressable
-          onPress={() => setOnlyFavorites(f => !f)}
-          accessibilityRole="button"
-          accessibilityState={{selected: onlyFavorites}}
-          style={[
-            styles.favHeaderPill,
-            {
-              backgroundColor: onlyFavorites
-                ? colors.brand.primary
-                : colors.brand.primaryContainer,
-              borderRadius: radius.pill,
-            },
-          ]}>
-          <SimbaIcon
-            name={onlyFavorites ? 'heart' : 'heart-outline'}
-            size={16}
-            color={
-              onlyFavorites
-                ? colors.brand.onPrimary
-                : colors.brand.onPrimaryContainer
-            }
-          />
-          <AppText
-            variant="labelSmall"
-            style={{
-              color: onlyFavorites
-                ? colors.brand.onPrimary
-                : colors.brand.onPrimaryContainer,
-            }}>
-            {lane.favoritesTitle ?? 'Favorites'}
-          </AppText>
-        </Pressable>
-      ) : null}
+      <View style={styles.headerRight}>
+        {lane.hasFavorites ? (
+          <Pressable
+            onPress={() => setOnlyFavorites(f => !f)}
+            accessibilityRole="button"
+            accessibilityState={{selected: onlyFavorites}}
+            style={[
+              styles.favHeaderPill,
+              {
+                backgroundColor: onlyFavorites
+                  ? colors.brand.primary
+                  : colors.brand.primaryContainer,
+                borderRadius: radius.pill,
+              },
+            ]}>
+            <SimbaIcon
+              name={onlyFavorites ? 'heart' : 'heart-outline'}
+              size={16}
+              color={
+                onlyFavorites
+                  ? colors.brand.onPrimary
+                  : colors.brand.onPrimaryContainer
+              }
+            />
+            <AppText
+              variant="labelSmall"
+              style={{
+                color: onlyFavorites
+                  ? colors.brand.onPrimary
+                  : colors.brand.onPrimaryContainer,
+              }}>
+              {lane.favoritesTitle ?? 'Favorites'}
+            </AppText>
+          </Pressable>
+        ) : null}
+        <FilterIconButton
+          activeCount={activeFilterCount}
+          onPress={() => setFilterVisible(true)}
+        />
+      </View>
     </View>
   );
 
+  const handleLoadMore = () => {
+    if (
+      liveBrowse.hasNextPage &&
+      !liveBrowse.isFetchingNextPage &&
+      !liveBrowse.isLoading &&
+      !liveBrowse.pageError
+    ) {
+      void liveBrowse.fetchNextPage();
+    }
+  };
+
   return (
-    <Screen scroll header={stickyHeader}>
+    <Screen scroll header={stickyHeader} onEndReached={handleLoadMore}>
       <View
         style={[
           styles.container,
-          {paddingTop: spacing.sm, paddingBottom: spacing.lg},
+          {paddingTop: spacing.xs, paddingBottom: spacing.lg},
         ]}>
 
-        {/* 2. Quick Catalogue Switcher Strip */}
-        <Rail gap={8} padding={spacing.lg}>
-          {catalogueLanes.map(entry => (
-            <Chip
-              key={entry.id}
-              label={entry.label}
-              selected={entry.id === lane.id}
-              onPress={() => {
-                setSelectedChip(entry.filters[0] ?? 'Popular');
-                setOnlyFavorites(false);
-                router.replace({
-                  pathname: '/catalogue/[lane]',
-                  params: {lane: entry.id},
-                });
-              }}
-            />
-          ))}
-        </Rail>
-
-        {/* 3. Search Field + FilterIconButton (04.1–04.8) */}
-        <View style={[styles.searchRow, {paddingHorizontal: spacing.lg}]}>
+        {/* Full-width Soft Tonal Search Field (same grammar as Explore & Search) */}
+        <View style={{paddingHorizontal: spacing.lg}}>
           <View
             style={[
               styles.searchBox,
               {
-                backgroundColor: colors.background.surface,
-                borderRadius: radius.lg,
-                borderColor: colors.border.default,
+                backgroundColor: colors.background.surfaceSubtle,
+                borderRadius: radius.pill,
+                borderColor: searchFocused
+                  ? colors.brand.primary
+                  : 'transparent',
               },
             ]}>
             <SimbaIcon
               name="magnify"
-              size={20}
-              color={colors.text.tertiary}
+              size={19}
+              color={colors.text.secondary}
             />
             <TextInput
               value={searchQuery}
               onChangeText={setSearchQuery}
+              onFocus={() => setSearchFocused(true)}
+              onBlur={() => setSearchFocused(false)}
               placeholder={lane.searchPlaceholder}
               placeholderTextColor={colors.text.tertiary}
+              returnKeyType="search"
               style={[styles.searchInput, {color: colors.text.primary}]}
             />
             {searchQuery.length > 0 ? (
               <Pressable
                 onPress={() => setSearchQuery('')}
                 accessibilityRole="button"
-                style={styles.clearBtn}>
+                accessibilityLabel="Clear search"
+                hitSlop={8}>
                 <SimbaIcon
-                  name="close-circle"
+                  name="close"
                   size={18}
-                  color={colors.text.tertiary}
+                  color={colors.text.secondary}
                 />
               </Pressable>
             ) : null}
           </View>
-          <FilterIconButton
-            activeCount={activeFilterCount}
-            onPress={() => setFilterVisible(true)}
-          />
         </View>
 
-        {/* 4. Active Filter Chips Strip */}
-        <Rail gap={8} padding={spacing.lg}>
-          {lane.filters.map(chip => (
-            <Chip
-              key={chip}
-              label={chip}
-              selected={selectedChip === chip}
-              onPress={() => setSelectedChip(chip)}
-            />
-          ))}
-        </Rail>
-
-        {/* 5. Shimmer Loading, Empty State, or Grid/List Content */}
+        {/* 5. Shimmer Loading, Error State, Empty State, or Grid/List Content */}
         {liveBrowse.isLoading && items.length === 0 ? (
           lane.layout === 'grid' ? (
             <CatalogueGridShimmer count={6} compact={lane.id === 'livetv'} />
           ) : (
             <CatalogueListShimmer count={6} />
           )
+        ) : liveBrowse.error && items.length === 0 ? (
+          <View style={{paddingHorizontal: spacing.lg}}>
+            <Surface tone="subtle" radius="lg" style={styles.emptyBox}>
+              <SimbaIcon
+                name="alert-circle-outline"
+                size={36}
+                color={colors.accent.gold}
+              />
+              <AppText variant="title">
+                {`Couldn't load ${lane.label.toLowerCase()}`}
+              </AppText>
+              <AppText variant="bodySmall" tone="secondary">
+                {liveBrowse.error instanceof Error
+                  ? liveBrowse.error.message
+                  : 'Please check your connection and try again.'}
+              </AppText>
+              <Button
+                label="Try Again"
+                variant="secondary"
+                onPress={() => void liveBrowse.refetch()}
+              />
+            </Surface>
+          </View>
         ) : items.length === 0 ? (
           <View style={{paddingHorizontal: spacing.lg}}>
-            <Surface tone="card" radius="lg" style={styles.emptyBox}>
+            <Surface tone="subtle" radius="lg" style={styles.emptyBox}>
               <SimbaIcon
                 name={lane.icon}
                 size={36}
@@ -312,13 +349,14 @@ export function CatalogueBrowseScreen({
                 {`No ${lane.label.toLowerCase()} match your active filter`}
               </AppText>
               <AppText variant="bodySmall" tone="secondary">
-                Try resetting filters or switching to Popular.
+                Try resetting filters or clearing your search.
               </AppText>
               <Button
                 label="Reset Filters"
                 variant="secondary"
                 onPress={() => {
                   setSelectedChip(lane.filters[0] ?? 'Popular');
+                  setGroupSelections({});
                   setSearchQuery('');
                   setOnlyFavorites(false);
                 }}
@@ -326,7 +364,7 @@ export function CatalogueBrowseScreen({
             </Surface>
           </View>
         ) : lane.layout === 'grid' ? (
-          /* 2-Column Poster / Broadcast Grid (04.1 Movies, 04.2 Shows, 04.6 Live TV, 04.8 Archive) */
+          /* Borderless 2-Column Poster / Broadcast Grid */
           <View style={[styles.gridWrap, {paddingHorizontal: spacing.lg}]}>
             {items.map(item => (
               <Pressable
@@ -335,89 +373,91 @@ export function CatalogueBrowseScreen({
                   router.push({pathname: '/media/[id]', params: {id: item.id}})
                 }
                 accessibilityRole="button"
-                style={styles.gridCell}>
-                <Surface tone="card" radius="lg" style={styles.gridCard}>
-                  <View
-                    style={[
-                      styles.gridPoster,
-                      {
-                        backgroundColor: colors.accent.goldWash,
-                        height: lane.id === 'livetv' ? 112 : 186,
-                        overflow: 'hidden',
-                      },
-                    ]}>
-                    <MediaArtwork
-                      uri={item.artworkUrl}
-                      icon={item.icon}
-                      iconSize={36}
-                      borderRadius={0}
-                      style={StyleSheet.absoluteFill}
+                style={({pressed}) => [
+                  styles.gridCell,
+                  {opacity: pressed ? 0.78 : 1},
+                ]}>
+                <View
+                  style={[
+                    styles.gridPoster,
+                    {
+                      backgroundColor: colors.accent.goldWash,
+                      height: lane.id === 'livetv' ? 112 : 186,
+                      borderRadius: radius.md,
+                      overflow: 'hidden',
+                    },
+                  ]}>
+                  <MediaArtwork
+                    uri={item.artworkUrl}
+                    icon={item.icon}
+                    iconSize={36}
+                    borderRadius={radius.md}
+                    style={StyleSheet.absoluteFill}
+                  />
+                  <View style={styles.posterTopLeft}>
+                    <Badge
+                      label={item.genre ?? item.year ?? MEDIA_KIND_LABELS[item.kind]}
+                      tone="onMedia"
                     />
-                    <View style={styles.posterTopLeft}>
-                      <Badge
-                        label={item.genre ?? item.year ?? MEDIA_KIND_LABELS[item.kind]}
-                        tone="gold"
+                  </View>
+                  {lane.hasFavorites ? (
+                    <Pressable
+                      onPress={() => toggleFavorite(item.id)}
+                      accessibilityRole="button"
+                      style={styles.posterTopRight}>
+                      <SimbaIcon
+                        name={isFavorite(item.id) ? 'heart' : 'heart-outline'}
+                        size={18}
+                        color={colors.accent.gold}
                       />
-                    </View>
-                    {lane.hasFavorites ? (
+                    </Pressable>
+                  ) : null}
+                </View>
+
+                <View style={styles.gridCardBody}>
+                  <AppText variant="label" numberOfLines={1}>
+                    {item.title}
+                  </AppText>
+                  <AppText variant="caption" tone="secondary" numberOfLines={1}>
+                    {item.subtitle || MEDIA_KIND_LABELS[item.kind]}
+                  </AppText>
+                  <View style={styles.gridFooterRow}>
+                    <AppText variant="caption" tone="gold">
+                      {item.rating
+                        ? `★ ${item.rating.toFixed(1)}`
+                        : item.year ?? 'LIVE'}
+                    </AppText>
+                    <View style={styles.cardActions}>
                       <Pressable
-                        onPress={() => toggleFavorite(item.id)}
+                        onPress={() => {
+                          void playCatalogueItem(item);
+                          router.push(
+                            item.lane === 'video'
+                              ? '/player/video'
+                              : '/player/audio',
+                          );
+                        }}
                         accessibilityRole="button"
-                        style={styles.posterTopRight}>
+                        style={styles.miniIconTap}>
                         <SimbaIcon
-                          name={isFavorite(item.id) ? 'heart' : 'heart-outline'}
-                          size={18}
+                          name="play-circle"
+                          size={20}
                           color={colors.accent.gold}
                         />
                       </Pressable>
-                    ) : null}
-                  </View>
-
-                  <View style={styles.gridCardBody}>
-                    <AppText variant="labelSmall" numberOfLines={1}>
-                      {item.title}
-                    </AppText>
-                    <AppText variant="caption" tone="tertiary" numberOfLines={1}>
-                      {item.subtitle || MEDIA_KIND_LABELS[item.kind]}
-                    </AppText>
-                    <View style={styles.gridFooterRow}>
-                      <AppText variant="caption" tone="gold">
-                        {item.rating
-                          ? `★ ${item.rating.toFixed(1)}`
-                          : item.year ?? 'LIVE'}
-                      </AppText>
-                      <View style={styles.cardActions}>
-                        <Pressable
-                          onPress={() => {
-                            void playCatalogueItem(item);
-                            router.push(
-                              item.lane === 'video'
-                                ? '/player/video'
-                                : '/player/audio',
-                            );
-                          }}
-                          accessibilityRole="button"
-                          style={styles.miniIconTap}>
-                          <SimbaIcon
-                            name="play-circle"
-                            size={20}
-                            color={colors.accent.gold}
-                          />
-                        </Pressable>
-                        <Pressable
-                          onPress={() => setActionItem(item)}
-                          accessibilityRole="button"
-                          style={styles.miniIconTap}>
-                          <SimbaIcon
-                            name="dots-vertical"
-                            size={18}
-                            color={colors.text.tertiary}
-                          />
-                        </Pressable>
-                      </View>
+                      <Pressable
+                        onPress={() => setActionItem(item)}
+                        accessibilityRole="button"
+                        style={styles.miniIconTap}>
+                        <SimbaIcon
+                          name="dots-vertical"
+                          size={18}
+                          color={colors.text.tertiary}
+                        />
+                      </Pressable>
                     </View>
                   </View>
-                </Surface>
+                </View>
               </Pressable>
             ))}
           </View>
@@ -516,10 +556,14 @@ export function CatalogueBrowseScreen({
           </View>
         )}
 
-        {/* 6. Pagination Footer: Load More / Shimmer / Retry / Caught-Up */}
+        {/* 6. Automatic Infinite-Scroll Pagination Footer: Shimmer / Retry / Caught-Up */}
         {liveBrowse.isFetchingNextPage ? (
           <View style={{paddingVertical: spacing.md}}>
-            <CatalogueListShimmer count={2} />
+            {lane.layout === 'grid' ? (
+              <CatalogueGridShimmer count={2} compact={lane.id === 'livetv'} />
+            ) : (
+              <CatalogueListShimmer count={2} />
+            )}
           </View>
         ) : liveBrowse.pageError ? (
           <View style={{paddingHorizontal: spacing.lg, paddingVertical: spacing.md}}>
@@ -529,15 +573,7 @@ export function CatalogueBrowseScreen({
               onPress={() => void liveBrowse.fetchNextPage()}
             />
           </View>
-        ) : liveBrowse.hasNextPage && items.length > 0 ? (
-          <View style={{paddingHorizontal: spacing.lg, paddingVertical: spacing.md}}>
-            <Button
-              label={`Load more ${lane.label.toLowerCase()}`}
-              variant="secondary"
-              onPress={() => void liveBrowse.fetchNextPage()}
-            />
-          </View>
-        ) : items.length > 0 ? (
+        ) : !liveBrowse.hasNextPage && items.length > 0 ? (
           <View style={[styles.footerRuleWrap, {paddingHorizontal: spacing.lg}]}>
             <View
               style={[styles.footerRule, {backgroundColor: colors.border.default}]}
@@ -552,15 +588,17 @@ export function CatalogueBrowseScreen({
         ) : null}
       </View>
 
-      {/* Multi-Group Catalogue FilterSheet (04.1–04.8) */}
+      {/* Multi-Group Catalogue FilterSheet (genres + sort all live here) */}
       <FilterSheet
         visible={filterVisible}
-        groups={lane.filterGroups}
+        title={`Filter ${lane.label}`}
+        subtitle={`Choose genres and sort order for ${lane.label.toLowerCase()}`}
+        groups={filterGroups}
         initialValues={
           Object.keys(groupSelections).length > 0
             ? groupSelections
             : Object.fromEntries(
-                lane.filterGroups.map(g => [
+                filterGroups.map(g => [
                   g.id,
                   [g.options[0]?.key ?? 'All'],
                 ]),
@@ -568,10 +606,10 @@ export function CatalogueBrowseScreen({
         }
         onApply={selected => {
           setGroupSelections(selected);
-          const firstGroupKey = lane.filterGroups[0]?.id;
+          const firstGroupKey = filterGroups[0]?.id;
           const chosen = firstGroupKey ? selected[firstGroupKey]?.[0] : undefined;
-          if (chosen && chosen !== 'All') {
-            setSelectedChip(chosen);
+          if (chosen) {
+            setSelectedChip(chosen === 'All' ? (lane.filters[0] ?? 'Popular') : chosen);
           }
         }}
         onReset={() => {
@@ -698,6 +736,11 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   titleCol: {flex: 1, gap: 2},
+  headerRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
   favHeaderPill: {
     minHeight: 38,
     flexDirection: 'row',
@@ -705,30 +748,18 @@ const styles = StyleSheet.create({
     gap: 6,
     paddingHorizontal: 12,
   },
-  searchRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-  },
   searchBox: {
-    flex: 1,
     minHeight: 44,
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 12,
-    borderWidth: StyleSheet.hairlineWidth,
-    gap: 8,
+    paddingHorizontal: 14,
+    borderWidth: 1,
+    gap: 10,
   },
   searchInput: {
     flex: 1,
     minHeight: 44,
     paddingVertical: 8,
-  },
-  clearBtn: {
-    width: 32,
-    height: 44,
-    alignItems: 'center',
-    justifyContent: 'center',
   },
   emptyBox: {
     padding: 24,
@@ -742,9 +773,6 @@ const styles = StyleSheet.create({
   },
   gridCell: {
     width: '48%',
-  },
-  gridCard: {
-    overflow: 'hidden',
   },
   gridPoster: {
     alignItems: 'center',
@@ -765,8 +793,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   gridCardBody: {
-    padding: 10,
-    gap: 4,
+    paddingTop: 7,
+    gap: 2,
   },
   gridFooterRow: {
     flexDirection: 'row',

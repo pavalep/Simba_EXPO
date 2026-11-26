@@ -9,6 +9,7 @@ import {
   usePlayer,
   usePlayerProgress,
   useSimbaPlayback,
+  useSmoothPlaybackPosition,
 } from '../../infrastructure/player';
 import {
   AppText,
@@ -92,10 +93,8 @@ export function AudioPlayerScreen(props: AudioPlayerScreenProps) {
     mpvState.isPlaying ||
     mpvState.isLoading;
 
+  const [scrubFraction, setScrubFraction] = useState<number | null>(null);
   const isPlaying = hasLiveMpvMedia ? mpvState.isPlaying : dummyIsPlaying;
-  const positionSeconds = hasLiveMpvMedia
-    ? Math.floor(mpvProgress.positionMs / 1000)
-    : dummyPositionSeconds;
   const liveDurationSeconds =
     mpvProgress.durationMs > 0
       ? Math.floor(mpvProgress.durationMs / 1000)
@@ -105,10 +104,32 @@ export function AudioPlayerScreen(props: AudioPlayerScreenProps) {
   const subtitle = props.subtitle ?? nowPlaying?.subtitle ?? '';
   const duration =
     liveDurationSeconds ?? props.duration ?? nowPlaying?.durationSeconds ?? 0;
+  const durationMs =
+    mpvProgress.durationMs > 0 ? mpvProgress.durationMs : duration * 1000;
+
+  const {displayPositionMs, commitOptimisticSeek} = useSmoothPlaybackPosition({
+    positionMs: hasLiveMpvMedia
+      ? mpvProgress.positionMs
+      : dummyPositionSeconds * 1000,
+    durationMs,
+    isPlaying,
+    isBuffering: mpvState.isBuffering || resolvingStream,
+    isSeeking: mpvProgress.isSeeking,
+    speed: mpvState.speed || 1,
+    mediaKey: nowPlaying?.id,
+  });
+
+  const shownPositionMs =
+    scrubFraction != null && durationMs > 0
+      ? scrubFraction * durationMs
+      : displayPositionMs;
+  const positionSeconds = Math.floor(shownPositionMs / 1000);
 
   const togglePlay = () => {
     if (hasLiveMpvMedia) {
       commands.togglePlayPause();
+    } else if (nowPlaying) {
+      void playCatalogueItem(nowPlaying);
     } else {
       dummyTogglePlay();
     }
@@ -121,12 +142,21 @@ export function AudioPlayerScreen(props: AudioPlayerScreenProps) {
       }
       const clamped = Math.max(0, duration > 0 ? Math.min(duration, secs) : secs);
       if (hasLiveMpvMedia) {
-        commands.seek(clamped * 1000);
+        const targetMs = Math.round(clamped * 1000);
+        commitOptimisticSeek(targetMs);
+        commands.seek(targetMs);
       } else {
-        dummySeekTo(clamped);
+        dummySeekTo(Math.round(clamped));
       }
     },
-    [isLiveRadio, duration, hasLiveMpvMedia, commands, dummySeekTo],
+    [
+      isLiveRadio,
+      duration,
+      hasLiveMpvMedia,
+      commitOptimisticSeek,
+      commands,
+      dummySeekTo,
+    ],
   );
 
   const handleSkipPrev = useCallback(() => {
@@ -185,13 +215,9 @@ export function AudioPlayerScreen(props: AudioPlayerScreenProps) {
         : 'NOW PLAYING';
 
   const isBookmarked = bookmarks.some(b => b.itemId === nowPlaying?.id);
-  const durationMs =
-    mpvProgress.durationMs > 0
-      ? mpvProgress.durationMs
-      : duration * 1000;
   const progress =
     durationMs > 0
-      ? Math.min(1, Math.max(0, (hasLiveMpvMedia ? mpvProgress.positionMs : positionSeconds * 1000) / durationMs))
+      ? Math.min(1, Math.max(0, shownPositionMs / durationMs))
       : 0;
   const remaining = Math.max(0, duration - positionSeconds);
   const isAudioBuffering =
@@ -324,8 +350,8 @@ export function AudioPlayerScreen(props: AudioPlayerScreenProps) {
               size={14}
               color={colors.accent.gold}
             />
-            <AppText variant="labelSmall" tone="bright">
-              {`Sleep: ${SLEEP_TIMERS[sleepIdx]}`}
+            <AppText variant="labelSmall" tone="bright" numberOfLines={1}>
+              {`Sleep:\u00A0${SLEEP_TIMERS[sleepIdx]}`}
             </AppText>
           </Pressable>
 
@@ -345,8 +371,8 @@ export function AudioPlayerScreen(props: AudioPlayerScreenProps) {
               size={14}
               color={colors.accent.gold}
             />
-            <AppText variant="labelSmall" tone="gold">
-              {`EQ: ${eqPreset}`}
+            <AppText variant="labelSmall" tone="gold" numberOfLines={1}>
+              {`EQ:\u00A0${eqPreset}`}
             </AppText>
           </Pressable>
         </View>
@@ -396,9 +422,10 @@ export function AudioPlayerScreen(props: AudioPlayerScreenProps) {
             durationMs={durationMs}
             cacheRanges={mpvProgress.cacheRanges}
             isBuffering={isAudioBuffering}
+            onScrubFraction={setScrubFraction}
             onSeekFraction={ratio => {
               if (duration > 0) {
-                seekTo(Math.round(ratio * duration));
+                seekTo(ratio * duration);
               }
             }}
             accessibilityLabel="Audio seek bar"

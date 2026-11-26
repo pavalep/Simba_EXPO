@@ -1,11 +1,7 @@
-import React from 'react';
-import Svg, {Circle, Path} from 'react-native-svg';
+import React, {useMemo} from 'react';
+import {SvgXml} from 'react-native-svg';
 import {useTheme} from '../../theme/ThemeProvider';
-import {
-  SIMBA_ICON_SPECS,
-  type SimbaIconName,
-  type SimbaIconSpec,
-} from './simbaIconPaths';
+import {SIMBA_ICON_BODIES, type SimbaIconName} from './simbaIconPaths';
 
 export type {SimbaIconName};
 
@@ -13,53 +9,26 @@ export interface SimbaIconProps {
   name: SimbaIconName | (string & {});
   size?: number;
   color?: string;
-  strokeWidth?: number;
 }
 
-const FALLBACK_SPEC: SimbaIconSpec = SIMBA_ICON_SPECS['play-circle-outline'];
+const FALLBACK_BODY = SIMBA_ICON_BODIES['play-circle-outline'];
 
 /**
- * Cohesive custom SVG icon renderer for SIMBA.
- * Uses uniform 24x24 viewBox, rounded stroke terminals, and Lion-editorial
- * proportions across every screen, tab bar, button, chip, and player control.
+ * Official Solar Icons (Line Duotone + Bold) renderer powered by
+ * `react-native-svg`'s native `<SvgXml>` parser — zero custom conversion,
+ * 100% faithful vector geometry, transforms, and two-tone duotone opacity.
  */
-export function SimbaIcon({
-  name,
-  size = 20,
-  color,
-  strokeWidth = 1.85,
-}: SimbaIconProps) {
+export function SimbaIcon({name, size = 20, color}: SimbaIconProps) {
   const {colors} = useTheme();
   const resolvedColor = color ?? colors.accent.gold;
-  const spec: SimbaIconSpec =
-    (SIMBA_ICON_SPECS as Record<string, SimbaIconSpec>)[name] ?? FALLBACK_SPEC;
+
+  const xml = useMemo(() => {
+    const body =
+      (SIMBA_ICON_BODIES as Record<string, string>)[name] ?? FALLBACK_BODY;
+    return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none">${body}</svg>`;
+  }, [name]);
 
   return (
-    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
-      {spec.fills?.map((d, idx) => (
-        <Path key={`f-${idx}`} d={d} fill={resolvedColor} />
-      ))}
-      {spec.paths?.map((d, idx) => (
-        <Path
-          key={`p-${idx}`}
-          d={d}
-          stroke={resolvedColor}
-          strokeWidth={strokeWidth}
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
-      ))}
-      {spec.circles?.map((c, idx) => (
-        <Circle
-          key={`c-${idx}`}
-          cx={c.cx}
-          cy={c.cy}
-          r={c.r}
-          fill={c.filled ? resolvedColor : 'none'}
-          stroke={c.filled ? 'none' : resolvedColor}
-          strokeWidth={c.filled ? 0 : strokeWidth}
-        />
-      ))}
-    </Svg>
+    <SvgXml xml={xml} width={size} height={size} color={resolvedColor} />
   );
 }

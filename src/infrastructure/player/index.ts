@@ -1,4 +1,4 @@
-import {useCallback, useState} from 'react';
+import {useCallback, useEffect, useRef, useState} from 'react';
 import {
   SimbaVideo,
   usePlayer,
@@ -199,11 +199,8 @@ export function useSimbaPlayback() {
           };
         } else {
           pendingVideoLoad = null;
-          await commands.openPlayer({
-            uri: resolved.url,
-            title: item.title,
-            type: 'audio',
-          });
+          commands.loadFile(resolved.url, item.title);
+          commands.play();
         }
         setResolvingStream(false);
         return true;
@@ -247,5 +244,167 @@ export function useSimbaPlayback() {
     playCatalogueItem,
     stopAndClose,
     applyEqualizer,
+  };
+}
+
+export interface SmoothPlaybackPositionOptions {
+  /** Authoritative position in ms from libmpv (`usePlayerProgress().positionMs`). */
+  positionMs: number;
+  /** Total duration in ms. */
+  durationMs: number;
+  /** True when the engine is actively playing. */
+  isPlaying: boolean;
+  /** True when stalled/buffering (pauses interpolation). */
+  isBuffering?: boolean;
+  /** True while engine is seeking (pauses interpolation). */
+  isSeeking?: boolean;
+  /** Playback rate multiplier (defaults to 1). */
+  speed?: number;
+  /** Active media identifier; resets interpolation anchor on track change. */
+  mediaKey?: string | null;
+}
+
+const SMOOTH_TICK_MS = 100;
+const SEEK_CONFIRM_TOLERANCE_MS = 650;
+const SEEK_CONFIRM_FALLBACK_MS = 1200;
+const BACKWARD_JITTER_GUARD_MS = 350;
+
+/**
+ * Smooth 10 Hz playback clock anchored to libmpv's `time-pos` events.
+ *
+ * On audio-only streams (podcasts, music, audiobooks), libmpv has no video
+ * frames to trigger per-frame `time-pos` updates and instead emits `time-pos`
+ * only when audio buffers flush (every 2–5 s on Android AudioTrack). Without
+ * local interpolation, the seekbar and elapsed timer jump in 3–5 s chunks.
+ *
+ * This hook advances smoothly between native ticks at `speed`x, re-anchors on
+ * every authoritative libmpv update (suppressing tiny backward audio-buffer
+ * jitter), freezes immediately when paused/buffering, and holds optimistic
+ * seek targets until libmpv confirms the new position.
+ */
+export function useSmoothPlaybackPosition({
+  positionMs,
+  durationMs,
+  isPlaying,
+  isBuffering = false,
+  isSeeking = false,
+  speed = 1,
+  mediaKey,
+}: SmoothPlaybackPositionOptions) {
+  const safeSpeed = speed > 0 && Number.isFinite(speed) ? speed : 1;
+  const anchorRef = useRef({posMs: positionMs, wallMs: Date.now()});
+  const [displayPositionMs, setDisplayPositionMs] = useState(positionMs);
+  const [pendingSeekMs, setPendingSeekMs] = useState<number | null>(null);
+  const seekFallbackRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastMediaKeyRef = useRef(mediaKey);
+
+  // Reset immediately when switching tracks
+  useEffect(() => {
+    if (lastMediaKeyRef.current !== mediaKey) {
+      lastMediaKeyRef.current = mediaKey;
+      anchorRef.current = {posMs: positionMs, wallMs: Date.now()};
+      setPendingSeekMs(null);
+      if (seekFallbackRef.current) {
+        clearTimeout(seekFallbackRef.current);
+        seekFallbackRef.current = null;
+      }
+      setDisplayPositionMs(positionMs);
+    }
+  }, [mediaKey, positionMs]);
+
+  // Clear pending seek once libmpv confirms arrival near the target
+  useEffect(() => {
+    if (pendingSeekMs == null) {
+      return;
+    }
+    if (Math.abs(positionMs - pendingSeekMs) <= SEEK_CONFIRM_TOLERANCE_MS) {
+      setPendingSeekMs(null);
+      if (seekFallbackRef.current) {
+        clearTimeout(seekFallbackRef.current);
+        seekFallbackRef.current = null;
+      }
+      anchorRef.current = {posMs: positionMs, wallMs: Date.now()};
+      setDisplayPositionMs(positionMs);
+    }
+  }, [positionMs, pendingSeekMs]);
+
+  // Re-anchor whenever an authoritative positionMs arrives from libmpv
+  useEffect(() => {
+    if (pendingSeekMs != null) {
+      return;
+    }
+    const now = Date.now();
+    const elapsedWall = now - anchorRef.current.wallMs;
+    const predictedMs =
+      isPlaying && !isBuffering && !isSeeking
+        ? anchorRef.current.posMs + elapsedWall * safeSpeed
+        : anchorRef.current.posMs;
+
+    const backwardDelta = predictedMs - positionMs;
+    if (
+      isPlaying &&
+      !isBuffering &&
+      !isSeeking &&
+      backwardDelta > 0 &&
+      backwardDelta < BACKWARD_JITTER_GUARD_MS
+    ) {
+      // Suppress tiny backward audio-buffer jitter while playing
+      return;
+    }
+
+    anchorRef.current = {posMs: positionMs, wallMs: now};
+    setDisplayPositionMs(positionMs);
+  }, [positionMs, isPlaying, isBuffering, isSeeking, safeSpeed, pendingSeekMs]);
+
+  // Smooth 10 Hz tick between native libmpv updates
+  useEffect(() => {
+    if (!isPlaying || isBuffering || isSeeking || durationMs <= 0) {
+      return;
+    }
+    anchorRef.current = {
+      posMs: pendingSeekMs ?? displayPositionMs,
+      wallMs: Date.now(),
+    };
+    const id = setInterval(() => {
+      if (pendingSeekMs != null) {
+        return;
+      }
+      const elapsed = Date.now() - anchorRef.current.wallMs;
+      const next = Math.min(
+        durationMs,
+        Math.max(0, anchorRef.current.posMs + elapsed * safeSpeed),
+      );
+      setDisplayPositionMs(next);
+    }, SMOOTH_TICK_MS);
+    return () => clearInterval(id);
+    // Intentionally anchor when play/pause/buffering/speed/duration/seek state changes
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isPlaying, isBuffering, isSeeking, durationMs, safeSpeed, pendingSeekMs]);
+
+  useEffect(() => {
+    return () => {
+      if (seekFallbackRef.current) {
+        clearTimeout(seekFallbackRef.current);
+      }
+    };
+  }, []);
+
+  const commitOptimisticSeek = useCallback((targetMs: number) => {
+    const clamped = Math.max(0, targetMs);
+    setPendingSeekMs(clamped);
+    anchorRef.current = {posMs: clamped, wallMs: Date.now()};
+    setDisplayPositionMs(clamped);
+    if (seekFallbackRef.current) {
+      clearTimeout(seekFallbackRef.current);
+    }
+    seekFallbackRef.current = setTimeout(() => {
+      setPendingSeekMs(null);
+      seekFallbackRef.current = null;
+    }, SEEK_CONFIRM_FALLBACK_MS);
+  }, []);
+
+  return {
+    displayPositionMs: pendingSeekMs ?? displayPositionMs,
+    commitOptimisticSeek,
   };
 }

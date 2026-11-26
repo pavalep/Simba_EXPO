@@ -8,6 +8,7 @@ import {
   usePlayer,
   usePlayerProgress,
   useSimbaPlayback,
+  useSmoothPlaybackPosition,
 } from '../../infrastructure/player';
 import {AppText, Badge, IconButton, MediaArtwork, ProgressBar} from '../ui';
 
@@ -33,27 +34,39 @@ export function MiniPlayerDock() {
   const mpvProgress = usePlayerProgress();
   const {stopAndClose} = useSimbaPlayback();
 
+  const hasLiveMpvMedia = Boolean(
+    nowPlaying &&
+      (nowPlaying.streamUrl ||
+        mpvProgress.durationMs > 0 ||
+        mpvState.isPlaying ||
+        mpvState.isLoading),
+  );
+
+  const isPlaying = hasLiveMpvMedia ? mpvState.isPlaying : dummyIsPlaying;
+  const durationMs =
+    mpvProgress.durationMs > 0
+      ? mpvProgress.durationMs
+      : (nowPlaying?.durationSeconds ?? 2890) * 1000;
+
+  const {displayPositionMs} = useSmoothPlaybackPosition({
+    positionMs: hasLiveMpvMedia
+      ? mpvProgress.positionMs
+      : dummyPositionSeconds * 1000,
+    durationMs,
+    isPlaying: Boolean(dockVisible && nowPlaying && isPlaying),
+    isBuffering: mpvState.isBuffering,
+    isSeeking: mpvProgress.isSeeking,
+    speed: mpvState.speed || 1,
+    mediaKey: nowPlaying?.id,
+  });
+
   if (!dockVisible || !nowPlaying) {
     return null;
   }
 
-  const hasLiveMpvMedia =
-    Boolean(nowPlaying.streamUrl) ||
-    mpvProgress.durationMs > 0 ||
-    mpvState.isPlaying ||
-    mpvState.isLoading;
-
-  const isPlaying = hasLiveMpvMedia ? mpvState.isPlaying : dummyIsPlaying;
-  const positionSeconds = hasLiveMpvMedia
-    ? Math.floor(mpvProgress.positionMs / 1000)
-    : dummyPositionSeconds;
-  const total =
-    mpvProgress.durationMs > 0
-      ? Math.floor(mpvProgress.durationMs / 1000)
-      : nowPlaying.durationSeconds ?? 2890;
-
   const isVideo = nowPlaying.lane === 'video';
-  const progress = total > 0 ? Math.min(1, positionSeconds / total) : 0.35;
+  const progress =
+    durationMs > 0 ? Math.min(1, Math.max(0, displayPositionMs / durationMs)) : 0;
 
   const handleTogglePlay = () => {
     if (hasLiveMpvMedia) {

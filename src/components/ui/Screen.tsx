@@ -1,6 +1,8 @@
-import React, {useState} from 'react';
+import React, {useRef, useState} from 'react';
 import {
   LayoutChangeEvent,
+  NativeScrollEvent,
+  NativeSyntheticEvent,
   ViewProps,
   View,
   ScrollView,
@@ -23,6 +25,10 @@ export interface ScreenProps extends ViewProps {
   bottomInset?: number;
   /** Set true on tab screens where the bottom TabBar already consumes `insets.bottom`. */
   inTabs?: boolean;
+  /** Optional infinite-scroll callback triggered automatically as the user nears the bottom. */
+  onEndReached?: () => void;
+  /** Distance from the bottom (in dp) at which `onEndReached` fires (default: 360). */
+  onEndReachedThreshold?: number;
 }
 
 /**
@@ -37,11 +43,14 @@ export function Screen({
   scroll,
   bottomInset = 0,
   inTabs = false,
+  onEndReached,
+  onEndReachedThreshold = 360,
   style,
   ...rest
 }: ScreenProps) {
   const {colors} = useTheme();
   const insets = useSafeAreaInsets();
+  const userDraggedRef = useRef(false);
   // When `inTabs` is true, the floating frosted bottom tab bar overlays the
   // bottom `64 + insets.bottom` so content visibly glides beneath it.
   const resolvedBottom = inTabs
@@ -56,6 +65,18 @@ export function Screen({
     }
   };
 
+  const handleScroll = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+    if (!onEndReached || !userDraggedRef.current) {
+      return;
+    }
+    const {layoutMeasurement, contentOffset, contentSize} = e.nativeEvent;
+    const distanceFromBottom =
+      contentSize.height - (contentOffset.y + layoutMeasurement.height);
+    if (distanceFromBottom <= onEndReachedThreshold) {
+      onEndReached();
+    }
+  };
+
   if (scroll) {
     if (header) {
       return (
@@ -67,6 +88,11 @@ export function Screen({
               {paddingBottom: resolvedBottom},
             ]}
             showsVerticalScrollIndicator={false}
+            scrollEventThrottle={120}
+            onScrollBeginDrag={() => {
+              userDraggedRef.current = true;
+            }}
+            onScroll={onEndReached ? handleScroll : undefined}
             {...(rest as ScrollViewProps)}>
             <View style={{height: headerHeight}} />
             {children}
@@ -108,6 +134,11 @@ export function Screen({
           {paddingTop: insets.top, paddingBottom: resolvedBottom},
         ]}
         showsVerticalScrollIndicator={false}
+        scrollEventThrottle={120}
+        onScrollBeginDrag={() => {
+          userDraggedRef.current = true;
+        }}
+        onScroll={onEndReached ? handleScroll : undefined}
         {...(rest as ScrollViewProps)}>
         {children}
       </ScrollView>

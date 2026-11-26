@@ -1,11 +1,16 @@
 import React, {useState} from 'react';
-import {Pressable, StyleSheet, View} from 'react-native';
+import {ActivityIndicator, Pressable, StyleSheet, View} from 'react-native';
+import {Image} from 'expo-image';
 import {SimbaIcon} from '../ui/SimbaIcon';
 import {useRouter} from 'expo-router';
 import {useTheme} from '../../theme/ThemeProvider';
 import {useSimbaStore} from '../../state/useSimbaStore';
-import {AppText, Screen, Surface} from '../ui';
-import {profile} from '../../data/dummy';
+import {
+  AuthError,
+  signInWithGoogle,
+  signOutFromGoogle,
+} from '../../services/authService';
+import {AppText, Screen} from '../ui';
 
 const AUDIO_QUALITIES = [
   'Lossless (320 kbps)',
@@ -34,7 +39,11 @@ export function ProfileScreen() {
   const {
     dockVisible,
     signedIn,
-    setSignedIn,
+    activeProfile,
+    signInAsProfile,
+    signOut,
+    preferences,
+    updatePreferences,
     bookmarks,
     history,
     playlistsList,
@@ -43,10 +52,74 @@ export function ProfileScreen() {
     downloads,
   } = useSimbaStore();
 
-  const [audioQualityIdx, setAudioQualityIdx] = useState(0);
-  const [videoQualityIdx, setVideoQualityIdx] = useState(0);
-  const [wifiOnly, setWifiOnly] = useState(true);
   const [cacheCleared, setCacheCleared] = useState(false);
+  const [authBusy, setAuthBusy] = useState(false);
+  const [authMessage, setAuthMessage] = useState<string | null>(null);
+
+  const {audioQualityIdx, videoQualityIdx, wifiOnly} = preferences;
+
+  const handleGoogleSignIn = async () => {
+    if (authBusy) {
+      return;
+    }
+    setAuthBusy(true);
+    setAuthMessage(null);
+    try {
+      const user = await signInWithGoogle();
+      signInAsProfile(user.name, user.email, user.id, user.photo);
+    } catch (err: unknown) {
+      if (err instanceof AuthError && err.kind === 'cancelled') {
+        setAuthMessage(null);
+      } else {
+        const msg =
+          err instanceof Error
+            ? err.message
+            : 'Could not sign in right now. Please try again.';
+        setAuthMessage(msg);
+      }
+    } finally {
+      setAuthBusy(false);
+    }
+  };
+
+  const handleSignOut = async () => {
+    if (authBusy) {
+      return;
+    }
+    setAuthBusy(true);
+    setAuthMessage(null);
+    try {
+      await signOutFromGoogle();
+      signOut();
+    } finally {
+      setAuthBusy(false);
+    }
+  };
+
+  const handleSwitchGoogleAccount = async () => {
+    if (authBusy) {
+      return;
+    }
+    setAuthBusy(true);
+    setAuthMessage(null);
+    try {
+      await signOutFromGoogle();
+      const user = await signInWithGoogle();
+      signInAsProfile(user.name, user.email, user.id, user.photo);
+    } catch (err: unknown) {
+      if (err instanceof AuthError && err.kind === 'cancelled') {
+        setAuthMessage(null);
+      } else {
+        const msg =
+          err instanceof Error
+            ? err.message
+            : 'Could not switch account right now.';
+        setAuthMessage(msg);
+      }
+    } finally {
+      setAuthBusy(false);
+    }
+  };
 
   const stickyHeader = (
     <View
@@ -58,9 +131,9 @@ export function ProfileScreen() {
           paddingBottom: spacing.sm,
         },
       ]}>
-      <AppText variant="h1">Profile & Library</AppText>
+      <AppText variant="h1">Profile &amp; Library</AppText>
       <AppText variant="caption" tone="secondary" numberOfLines={1}>
-        Your library, subscriptions, downloads, and preferences.
+        Your collection, history, and preferences.
       </AppText>
     </View>
   );
@@ -90,27 +163,38 @@ export function ProfileScreen() {
                     backgroundColor: colors.brand.primaryContainer,
                     borderColor: colors.brand.primary,
                     borderRadius: radius.full,
+                    overflow: 'hidden',
                   },
                 ]}>
-                <AppText
-                  variant="h2"
-                  style={{color: colors.brand.onPrimaryContainer}}>
-                  {profile.signedIn.name.charAt(0)}
-                </AppText>
+                {activeProfile.photo ? (
+                  <Image
+                    source={{uri: activeProfile.photo}}
+                    style={StyleSheet.absoluteFill}
+                    contentFit="cover"
+                  />
+                ) : (
+                  <AppText
+                    variant="h2"
+                    style={{color: colors.brand.onPrimaryContainer}}>
+                    {activeProfile.name.charAt(0).toUpperCase()}
+                  </AppText>
+                )}
               </View>
 
               <View style={styles.accountCopy}>
                 <View style={styles.verifiedRow}>
-                  <AppText variant="title">{profile.signedIn.name}</AppText>
+                  <AppText variant="title">{activeProfile.name}</AppText>
                   <SimbaIcon
                     name="check-decagram"
                     size={16}
                     color={colors.accent.gold}
                   />
                 </View>
-                <AppText variant="caption" tone="secondary">
-                  {profile.signedIn.email}
-                </AppText>
+                {activeProfile.email ? (
+                  <AppText variant="caption" tone="secondary">
+                    {activeProfile.email}
+                  </AppText>
+                ) : null}
                 <View style={styles.statusDotRow}>
                   <View
                     style={[
@@ -122,7 +206,7 @@ export function ProfileScreen() {
                     ]}
                   />
                   <AppText variant="caption" tone="tertiary">
-                    Connected via Google Sign-In
+                    Signed in
                   </AppText>
                 </View>
               </View>
@@ -137,7 +221,8 @@ export function ProfileScreen() {
 
             <View style={styles.signedInActions}>
               <Pressable
-                onPress={() => setSignedIn(false)}
+                onPress={handleSignOut}
+                disabled={authBusy}
                 accessibilityRole="button"
                 hitSlop={8}>
                 <AppText
@@ -148,18 +233,25 @@ export function ProfileScreen() {
               </Pressable>
 
               <Pressable
-                onPress={() => {}}
+                onPress={handleSwitchGoogleAccount}
+                disabled={authBusy}
                 accessibilityRole="button"
                 style={[
                   styles.outlinedSmallBtn,
                   {
                     borderColor: colors.border.default,
                     borderRadius: radius.sm,
+                    opacity: authBusy ? 0.6 : 1,
                   },
                 ]}>
-                <AppText variant="labelSmall">Sync Library</AppText>
+                <AppText variant="labelSmall">Switch Account</AppText>
               </Pressable>
             </View>
+            {authMessage ? (
+              <AppText variant="caption" style={{color: colors.semantic.error}}>
+                {authMessage}
+              </AppText>
+            ) : null}
           </View>
         ) : (
           <View
@@ -190,15 +282,16 @@ export function ProfileScreen() {
               </View>
 
               <View style={styles.accountCopy}>
-                <AppText variant="title">{profile.guest.name}</AppText>
+                <AppText variant="title">Guest</AppText>
                 <AppText variant="caption" tone="secondary">
-                  Sign in to sync your keepsakes, subscriptions, and listening across devices.
+                  Sign in to keep your favourites, history, and preferences personal.
                 </AppText>
               </View>
             </View>
 
             <Pressable
-              onPress={() => setSignedIn(true)}
+              onPress={handleGoogleSignIn}
+              disabled={authBusy}
               accessibilityRole="button"
               style={({pressed}) => [
                 styles.googleSignInBtn,
@@ -206,16 +299,21 @@ export function ProfileScreen() {
                   backgroundColor: colors.background.surfaceSubtle,
                   borderRadius: radius.pill,
                   borderWidth: 0,
-                  opacity: pressed ? 0.78 : 1,
+                  opacity: authBusy || pressed ? 0.72 : 1,
                 },
               ]}>
-              <SimbaIcon
-                name="google"
-                size={18}
-                color={colors.accent.gold}
-              />
+              {authBusy ? (
+                <ActivityIndicator size="small" color={colors.accent.gold} />
+              ) : (
+                <SimbaIcon name="google" size={20} />
+              )}
               <AppText variant="label">Continue with Google</AppText>
             </Pressable>
+            {authMessage ? (
+              <AppText variant="caption" style={{color: colors.semantic.error}}>
+                {authMessage}
+              </AppText>
+            ) : null}
           </View>
         )}
 
@@ -264,7 +362,7 @@ export function ProfileScreen() {
               icon="playlist-music"
               iconTone="gold"
               title="Playlists & Downloads"
-              subtitle={`${playlistsList.length} playlists • ${downloads.length} offline downloads`}
+              subtitle={`${playlistsList.length} playlists • ${downloads.length} downloads`}
               badgeCount={playlistsList.length}
               onPress={() => router.push('/library?tab=playlists')}
               showDivider
@@ -272,8 +370,8 @@ export function ProfileScreen() {
             <LibraryHubTile
               icon="folder-music-outline"
               iconTone="gold"
-              title="Device Folders"
-              subtitle={`${linkedFolders.length} folders connected on this phone`}
+              title="Folders"
+              subtitle={`${linkedFolders.length} folders added`}
               badgeCount={linkedFolders.length}
               onPress={() => router.push('/folders')}
               showDivider={false}
@@ -281,15 +379,18 @@ export function ProfileScreen() {
           </View>
         </View>
 
-        {/* 3. Playback & Storage (Canvas-merged, hairline-divided) */}
+        {/* 3. Playback & Preferences (Canvas-merged, hairline-divided) */}
         <View style={styles.sectionBlock}>
-          <AppText variant="h3">Playback &amp; Storage</AppText>
+          <AppText variant="h3">Playback &amp; Preferences</AppText>
 
           <View style={styles.groupCard}>
             {/* Audio Stream Quality */}
             <Pressable
               onPress={() =>
-                setAudioQualityIdx(i => (i + 1) % AUDIO_QUALITIES.length)
+                updatePreferences({
+                  audioQualityIdx:
+                    (audioQualityIdx + 1) % AUDIO_QUALITIES.length,
+                })
               }
               accessibilityRole="button"
               style={styles.prefRow}>
@@ -308,7 +409,7 @@ export function ProfileScreen() {
                 />
               </View>
               <View style={styles.tileCopy}>
-                <AppText variant="title">Audio Stream Quality</AppText>
+                <AppText variant="title">Audio Quality</AppText>
                 <AppText variant="caption" tone="secondary">
                   {AUDIO_QUALITIES[audioQualityIdx]}
                 </AppText>
@@ -329,7 +430,10 @@ export function ProfileScreen() {
             {/* Video Quality */}
             <Pressable
               onPress={() =>
-                setVideoQualityIdx(i => (i + 1) % VIDEO_QUALITIES.length)
+                updatePreferences({
+                  videoQualityIdx:
+                    (videoQualityIdx + 1) % VIDEO_QUALITIES.length,
+                })
               }
               accessibilityRole="button"
               style={styles.prefRow}>
@@ -366,9 +470,9 @@ export function ProfileScreen() {
               ]}
             />
 
-            {/* Stream Over Wi-Fi Only */}
+            {/* Wi-Fi Only */}
             <Pressable
-              onPress={() => setWifiOnly(v => !v)}
+              onPress={() => updatePreferences({wifiOnly: !wifiOnly})}
               accessibilityRole="switch"
               accessibilityState={{checked: wifiOnly}}
               style={styles.prefRow}>
@@ -387,9 +491,9 @@ export function ProfileScreen() {
                 />
               </View>
               <View style={styles.tileCopy}>
-                <AppText variant="title">Stream Over Wi-Fi Only</AppText>
+                <AppText variant="title">Wi-Fi Only</AppText>
                 <AppText variant="caption" tone="secondary">
-                  Prevent cellular data consumption
+                  Only stream when connected to Wi-Fi
                 </AppText>
               </View>
               <View
@@ -423,7 +527,7 @@ export function ProfileScreen() {
               ]}
             />
 
-            {/* Local Media Cache */}
+            {/* Temporary Files */}
             <View style={styles.prefRow}>
               <View
                 style={[
@@ -440,11 +544,11 @@ export function ProfileScreen() {
                 />
               </View>
               <View style={styles.tileCopy}>
-                <AppText variant="title">Local Media Cache</AppText>
+                <AppText variant="title">Temporary Files</AppText>
                 <AppText variant="caption" tone="secondary">
                   {cacheCleared
-                    ? '0.0 MB cached on device'
-                    : '14.2 MB cached on device'}
+                    ? 'Temporary files cleared'
+                    : 'Free up space used by temporary files'}
                 </AppText>
               </View>
               <Pressable

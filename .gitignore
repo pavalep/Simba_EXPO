@@ -37,6 +37,7 @@ yarn-error.*
 !.env.example
 src/constants/env.json
 .mcp.json
+google-services.json
 
 # typescript
 *.tsbuildinfo

@@ -28,6 +28,7 @@ export interface CatalogueBrowseInput {
   searchQuery?: string;
   selectedChip?: string;
   sortKey?: string;
+  enabled?: boolean;
 }
 
 export interface CataloguePage {
@@ -352,6 +353,7 @@ export function useCatalogueBrowse(input: CatalogueBrowseInput) {
       input.sortKey ?? 'Popular',
     ],
     initialPageParam: 1,
+    enabled: input.enabled ?? true,
     queryFn: ({pageParam, signal}) =>
       fetchCataloguePage(input, Number(pageParam ?? 1), signal),
     getNextPageParam: lastPage =>

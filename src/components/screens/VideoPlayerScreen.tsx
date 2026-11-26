@@ -27,6 +27,7 @@ import {
   usePlayer,
   usePlayerProgress,
   useSimbaPlayback,
+  useSmoothPlaybackPosition,
   type SimbaVideoResizeMode,
 } from '../../infrastructure/player';
 import {
@@ -355,18 +356,28 @@ export function VideoPlayerScreen(props: VideoPlayerScreenProps) {
   }, [mpvProgress.positionMs, pendingSeekMs]);
 
   const isPlaying = hasLiveMpvMedia ? mpvState.isPlaying : storeIsPlaying;
-  const effectivePositionMs =
-    pendingSeekMs != null
-      ? pendingSeekMs
-      : hasLiveMpvMedia
-      ? mpvProgress.positionMs
-      : storePositionSeconds * 1000;
-  const positionSeconds = Math.floor(effectivePositionMs / 1000);
   const durationMs =
     mpvProgress.durationMs > 0
       ? mpvProgress.durationMs
       : (props.duration ?? nowPlaying?.durationSeconds ?? 0) * 1000;
   const duration = Math.floor(durationMs / 1000);
+
+  const {displayPositionMs: smoothPositionMs, commitOptimisticSeek} =
+    useSmoothPlaybackPosition({
+      positionMs: hasLiveMpvMedia
+        ? mpvProgress.positionMs
+        : storePositionSeconds * 1000,
+      durationMs,
+      isPlaying,
+      isBuffering: mpvState.isBuffering || resolvingStream,
+      isSeeking: mpvProgress.isSeeking,
+      speed: mpvState.speed || 1,
+      mediaKey: nowPlaying?.id ?? targetStreamUrl,
+    });
+
+  const effectivePositionMs =
+    pendingSeekMs != null ? pendingSeekMs : smoothPositionMs;
+  const positionSeconds = Math.floor(effectivePositionMs / 1000);
 
   const progress =
     !isLiveMode && durationMs > 0
@@ -429,6 +440,7 @@ export function VideoPlayerScreen(props: VideoPlayerScreenProps) {
       const clamped = Math.max(0, duration > 0 ? Math.min(duration, secs) : secs);
       const targetMs = clamped * 1000;
       if (hasLiveMpvMedia) {
+        commitOptimisticSeek(targetMs);
         setPendingSeekMs(targetMs);
         if (seekFallbackRef.current) {
           clearTimeout(seekFallbackRef.current);
@@ -441,7 +453,14 @@ export function VideoPlayerScreen(props: VideoPlayerScreenProps) {
         storeSeekTo(clamped);
       }
     },
-    [isLiveMode, duration, hasLiveMpvMedia, commands, storeSeekTo],
+    [
+      isLiveMode,
+      duration,
+      hasLiveMpvMedia,
+      commitOptimisticSeek,
+      commands,
+      storeSeekTo,
+    ],
   );
 
   const handlePrev = useCallback(() => {

@@ -266,9 +266,6 @@ export function HomeScreen() {
         onLayout={handleHomePainted}
         style={[styles.root, {paddingTop: spacing.xs}]}>
 
-        {/* Shimmer skeleton while live feeds fetch on cold start */}
-        {homeFeed.isLoading ? <HomeFeedShimmer /> : null}
-
         {/* 3. Jump Back In — only shown once the user has real playback history */}
         {history.length > 0 ? (
           <>
@@ -278,72 +275,76 @@ export function HomeScreen() {
               action={`History (${history.length})`}
               onAction={() => router.push('/saved?tab=history')}
             />
-            <Rail gap={10} padding={spacing.lg}>
+            <Rail gap={12} padding={spacing.lg}>
               {history.slice(0, 8).map(item => (
                 <Pressable
                   key={item.id}
                   onPress={() => handlePlayItem(item)}
                   accessibilityRole="button"
                   accessibilityLabel={`Resume ${item.title}`}
-                  style={styles.jumpWrap}>
-                  <Surface tone="card" radius="md" style={styles.jumpCard}>
+                  style={({pressed}) => [
+                    styles.jumpWrap,
+                    {opacity: pressed ? 0.78 : 1},
+                  ]}>
+                  <View
+                    style={[
+                      styles.jumpFrame,
+                      {
+                        backgroundColor: colors.brand.primaryDark,
+                        borderRadius: radius.md,
+                        overflow: 'hidden',
+                      },
+                    ]}>
+                    <MediaArtwork
+                      uri={item.artworkUrl}
+                      icon={item.icon}
+                      iconSize={30}
+                      iconColor={colors.brand.primaryLight}
+                      borderRadius={radius.md}
+                      style={StyleSheet.absoluteFill}
+                    />
+                    <View style={styles.jumpBadgeTopLeft}>
+                      <Badge
+                        label={item.lane === 'video' ? 'VIDEO' : 'AUDIO'}
+                        tone="onMedia"
+                      />
+                    </View>
+                    {item.elapsedTotalLabel ? (
+                      <View style={styles.jumpTimestampBottomLeft}>
+                        <Badge label={item.elapsedTotalLabel} tone="onMedia" />
+                      </View>
+                    ) : null}
                     <View
                       style={[
-                        styles.jumpFrame,
+                        styles.jumpPlayCircle,
                         {
-                          backgroundColor: colors.brand.primaryDark,
-                          overflow: 'hidden',
+                          backgroundColor: colors.brand.primary,
+                          borderRadius: radius.full,
                         },
                       ]}>
-                      <MediaArtwork
-                        uri={item.artworkUrl}
-                        icon={item.icon}
-                        iconSize={30}
-                        iconColor={colors.brand.primaryLight}
-                        borderRadius={0}
-                        style={StyleSheet.absoluteFill}
+                      <SimbaIcon
+                        name="play"
+                        size={16}
+                        color={colors.brand.onPrimary}
                       />
-                      <View style={styles.jumpBadgeTopLeft}>
-                        <Badge
-                          label={item.lane === 'video' ? 'VIDEO' : 'AUDIO'}
-                          tone="onMedia"
-                        />
-                      </View>
-                      {item.elapsedTotalLabel ? (
-                        <View style={styles.jumpTimestampBottomLeft}>
-                          <Badge label={item.elapsedTotalLabel} tone="onMedia" />
-                        </View>
-                      ) : null}
-                      <View
-                        style={[
-                          styles.jumpPlayCircle,
-                          {
-                            backgroundColor: colors.brand.primary,
-                            borderRadius: radius.full,
-                          },
-                        ]}>
-                        <SimbaIcon
-                          name="play"
-                          size={16}
-                          color={colors.brand.onPrimary}
-                        />
-                      </View>
                     </View>
-                    <ProgressBar
-                      progress={item.progress ?? 0.15}
-                      height={3.5}
-                      trackColor={colors.border.subtle}
-                      fillColor={colors.accent.gold}
-                    />
-                    <View style={styles.jumpCopy}>
-                      <AppText variant="label" numberOfLines={1}>
-                        {item.title}
-                      </AppText>
-                      <AppText variant="caption" tone="secondary" numberOfLines={1}>
-                        {item.subtitle}
-                      </AppText>
+                    <View style={styles.jumpProgressBar}>
+                      <ProgressBar
+                        progress={item.progress ?? 0.15}
+                        height={3.5}
+                        trackColor={colors.background.onMediaPill}
+                        fillColor={colors.accent.gold}
+                      />
                     </View>
-                  </Surface>
+                  </View>
+                  <View style={styles.jumpCopy}>
+                    <AppText variant="label" numberOfLines={1}>
+                      {item.title}
+                    </AppText>
+                    <AppText variant="caption" tone="secondary" numberOfLines={1}>
+                      {item.subtitle}
+                    </AppText>
+                  </View>
                 </Pressable>
               ))}
             </Rail>
@@ -414,7 +415,7 @@ export function HomeScreen() {
                   onPress={() => openDetail(bm.itemId)}
                   accessibilityRole="button"
                   style={styles.bookmarkWrap}>
-                  <Surface tone="card" radius="md" style={styles.bookmarkCard}>
+                  <Surface tone="subtle" radius="md" style={styles.bookmarkCard}>
                     <View
                       style={[
                         styles.bookmarkArt,
@@ -476,7 +477,7 @@ export function HomeScreen() {
                   onPress={() => router.push('/library?tab=playlists')}
                   accessibilityRole="button"
                   style={styles.playlistWrap}>
-                  <Surface tone="card" radius="md" style={styles.playlistCard}>
+                  <Surface tone="subtle" radius="md" style={styles.playlistCard}>
                     <View
                       style={[
                         styles.playlistArt,
@@ -506,6 +507,11 @@ export function HomeScreen() {
           </>
         ) : null}
 
+        {/* Live Feed Sections — show full sweeping shimmer skeleton while loading so no empty titles leak */}
+        {homeFeed.isLoading ? (
+          <HomeFeedShimmer />
+        ) : (
+          <>
         {/* 7. Curated For You — 238x146 Handpicked Mix Cards (CodecM _buildCuratedForYouSection) */}
         <SectionHeader
           icon="creation"
@@ -897,6 +903,8 @@ export function HomeScreen() {
             </AppText>
           </View>
         </View>
+          </>
+        )}
 
         {/* Sheet 1: Home Universal FilterSheet */}
         <FilterSheet
@@ -1152,11 +1160,16 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   jumpWrap: {width: 214},
-  jumpCard: {overflow: 'hidden'},
   jumpFrame: {
-    height: 112,
+    height: 118,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  jumpProgressBar: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
   },
   jumpBadgeTopLeft: {
     position: 'absolute',
@@ -1165,12 +1178,12 @@ const styles = StyleSheet.create({
   },
   jumpTimestampBottomLeft: {
     position: 'absolute',
-    bottom: 8,
+    bottom: 10,
     left: 8,
   },
   jumpPlayCircle: {
     position: 'absolute',
-    bottom: 8,
+    bottom: 10,
     right: 8,
     width: 30,
     height: 30,
@@ -1178,7 +1191,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   jumpCopy: {
-    padding: 10,
+    paddingTop: 7,
     gap: 2,
   },
   subPodcastCol: {
