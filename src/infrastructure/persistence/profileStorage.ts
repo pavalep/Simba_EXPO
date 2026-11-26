@@ -36,6 +36,8 @@ export interface PersistedProfileSnapshot {
   podcastsList: FollowedPodcastRecord[];
   favoriteRadioIds: string[];
   favoriteTvIds: string[];
+  favoriteStations?: CatalogueItem[];
+  pinnedStationIds?: string[];
   eqPreset: string;
   eqGains: number[];
   downloads: DownloadRecord[];
@@ -68,6 +70,8 @@ export function createEmptyProfileSnapshot(
     podcastsList: [],
     favoriteRadioIds: [],
     favoriteTvIds: [],
+    favoriteStations: [],
+    pinnedStationIds: [],
     eqPreset: 'Flat',
     eqGains: defaultEqGains,
     downloads: [],
@@ -137,9 +141,12 @@ export function loadProfileRegistry(): ProfileRegistry {
 export function saveProfileRegistry(registry: ProfileRegistry): void {
   try {
     const file = getRegistryFile();
+    if (!file.exists) {
+      file.create({intermediates: true, overwrite: true});
+    }
     file.write(JSON.stringify(registry));
-  } catch {
-    // Non-fatal: keep in-memory state working even if storage is unavailable
+  } catch (err) {
+    console.warn('[profileStorage] saveProfileRegistry failed:', err);
   }
 }
 
@@ -174,9 +181,12 @@ export function saveProfileSnapshot(
 ): void {
   try {
     const file = getProfileDataFile(profileId);
+    if (!file.exists) {
+      file.create({intermediates: true, overwrite: true});
+    }
     file.write(JSON.stringify(snapshot));
-  } catch {
-    // Non-fatal
+  } catch (err) {
+    console.warn('[profileStorage] saveProfileSnapshot failed:', err);
   }
 }
 

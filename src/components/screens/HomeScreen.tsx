@@ -7,6 +7,9 @@ import {useSimbaStore} from '../../state/useSimbaStore';
 import {useHomeFeed} from '../../hooks/useHomeFeed';
 import {
   getLiveItemById,
+  reconstructItemFromBookmark,
+  reconstructItemFromSubscription,
+  registerLiveItem,
   registerLiveItems,
   useSimbaPlayback,
 } from '../../infrastructure/player';
@@ -15,8 +18,6 @@ import {
   Badge,
   Button,
   Chip,
-  FilterIconButton,
-  FilterSheet,
   HomeFeedShimmer,
   MediaArtwork,
   ProgressBar,
@@ -28,7 +29,6 @@ import {
   Surface,
 } from '../ui';
 import {
-  homeFilterGroups,
   quickCategories,
   type CatalogueItem,
   type CuratedMixRecord,
@@ -75,7 +75,19 @@ export function HomeScreen() {
     bookmarks,
     playlistsList,
     podcastsList,
+    favoriteRadioIds,
+    favoriteTvIds,
+    favoriteStations,
+    pinnedStationIds,
   } = useSimbaStore();
+  const pinnedPlaylists = useMemo(
+    () => playlistsList.filter(p => p.pinned),
+    [playlistsList],
+  );
+  const pinnedPodcasts = useMemo(
+    () => podcastsList.filter(p => p.pinned),
+    [podcastsList],
+  );
   const {playCatalogueItem} = useSimbaPlayback();
   const homeFeed = useHomeFeed();
 
@@ -91,20 +103,8 @@ export function HomeScreen() {
     }
   }, [homeFeed.movies, homeFeed.podcasts, homeFeed.music, homeFeed.radio]);
 
-  const [filterVisible, setFilterVisible] = useState(false);
-  const [filterValues, setFilterValues] = useState<Record<string, string[]>>({
-    category: ['all'],
-    sort: ['recommended'],
-  });
   const [selectedMix, setSelectedMix] = useState<CuratedMixRecord | null>(null);
   const [allMixesVisible, setAllMixesVisible] = useState(false);
-
-  const selectedCategory = filterValues.category?.[0] ?? 'all';
-  const selectedSort = filterValues.sort?.[0] ?? 'recommended';
-
-  const activeFilterCount =
-    (selectedCategory !== 'all' ? 1 : 0) +
-    (selectedSort !== 'recommended' ? 1 : 0);
 
   const sortedMixes = useMemo(
     () =>
@@ -120,6 +120,59 @@ export function HomeScreen() {
   const musicAndRadioItems = useMemo(
     () => [...homeFeed.music.slice(0, 6), ...homeFeed.radio.slice(0, 6)],
     [homeFeed.music, homeFeed.radio],
+  );
+
+  const resolvedFavoriteStations = useMemo(() => {
+    const byId = new Map<string, CatalogueItem>();
+    for (const st of favoriteStations) {
+      byId.set(st.id, st);
+    }
+    const allIds = [...favoriteRadioIds, ...favoriteTvIds];
+    const result: CatalogueItem[] = [];
+    const seen = new Set<string>();
+    for (const id of allIds) {
+      if (seen.has(id)) {
+        continue;
+      }
+      seen.add(id);
+      const found =
+        byId.get(id) ??
+        homeFeed.radio.find(r => r.id === id) ??
+        getLiveItemById(id) ??
+        history.find(h => h.id === id);
+      if (found) {
+        result.push(found);
+      } else {
+        const isTv = favoriteTvIds.includes(id) || id.startsWith('iptv-');
+        result.push({
+          id,
+          title: isTv ? 'Saved Channel' : 'Saved Station',
+          subtitle: isTv ? 'Live TV' : 'Radio',
+          kind: isTv ? 'live-tv' : 'radio',
+          lane: isTv ? 'video' : 'audio',
+          source: 'api',
+          provider: isTv ? 'IPTV-org' : 'RadioBrowser',
+          icon: isTv ? 'access-point' : 'radio-tower',
+          catalogueLaneId: isTv ? 'livetv' : 'radio',
+        });
+      }
+    }
+    return result;
+  }, [favoriteStations, favoriteRadioIds, favoriteTvIds, homeFeed.radio, history]);
+
+  const resolvedFavoriteRadio = useMemo(
+    () =>
+      resolvedFavoriteStations.filter(
+        st => st.kind !== 'live-tv' && pinnedStationIds.includes(st.id),
+      ),
+    [resolvedFavoriteStations, pinnedStationIds],
+  );
+  const resolvedFavoriteChannels = useMemo(
+    () =>
+      resolvedFavoriteStations.filter(
+        st => st.kind === 'live-tv' && pinnedStationIds.includes(st.id),
+      ),
+    [resolvedFavoriteStations, pinnedStationIds],
   );
 
   const recommendedItems = useMemo(
@@ -138,38 +191,29 @@ export function HomeScreen() {
       ...homeFeed.music.slice(0, 4),
       ...homeFeed.radio.slice(0, 4),
     ];
-    const pool =
-      selectedCategory === 'all'
-        ? livePool
-        : livePool.filter(i => i.kind === selectedCategory);
-
     const seen = new Set<string>();
-    const unique = pool.filter(i => {
+    return livePool.filter(i => {
       if (seen.has(i.id)) {
         return false;
       }
       seen.add(i.id);
       return true;
     });
-
-    if (selectedSort === 'rating') {
-      return [...unique].sort((a, b) => (b.rating ?? 0) - (a.rating ?? 0));
-    }
-    if (selectedSort === 'az') {
-      return [...unique].sort((a, b) => a.title.localeCompare(b.title));
-    }
-    return unique;
   }, [
     homeFeed.movies,
     homeFeed.podcasts,
     homeFeed.music,
     homeFeed.radio,
-    selectedCategory,
-    selectedSort,
   ]);
 
-  const openDetail = (id: string) =>
-    router.push({pathname: '/media/[id]', params: {id}});
+  const openDetail = (idOrItem: string | CatalogueItem) => {
+    if (typeof idOrItem === 'string') {
+      router.push({pathname: '/media/[id]', params: {id: idOrItem}});
+    } else {
+      registerLiveItem(idOrItem);
+      router.push({pathname: '/media/[id]', params: {id: idOrItem.id}});
+    }
+  };
   const openCatalogue = (laneId: string) =>
     router.push({pathname: '/catalogue/[lane]', params: {lane: laneId}});
 
@@ -237,10 +281,6 @@ export function HomeScreen() {
             color={colors.text.primary}
           />
         </Pressable>
-        <FilterIconButton
-          activeCount={activeFilterCount}
-          onPress={() => setFilterVisible(true)}
-        />
       </View>
     </View>
   );
@@ -266,6 +306,15 @@ export function HomeScreen() {
         onLayout={handleHomePainted}
         style={[styles.root, {paddingTop: spacing.xs}]}>
 
+        {homeFeed.isLoading ? (
+          <HomeFeedShimmer
+            hasHistory={history.length > 0}
+            hasSubscriptions={pinnedPodcasts.length > 0}
+            hasBookmarks={bookmarks.length > 0}
+            hasPlaylists={pinnedPlaylists.length > 0}
+          />
+        ) : (
+          <>
         {/* 3. Jump Back In — only shown once the user has real playback history */}
         {history.length > 0 ? (
           <>
@@ -351,8 +400,8 @@ export function HomeScreen() {
           </>
         ) : null}
 
-        {/* 4. Your Subscriptions — only shown when the user follows real podcasts */}
-        {podcastsList.length > 0 ? (
+        {/* 4. Pinned Podcasts — ONLY shown when the user pins followed podcasts */}
+        {pinnedPodcasts.length > 0 ? (
           <>
             <SectionHeader
               icon="rss"
@@ -361,10 +410,13 @@ export function HomeScreen() {
               onAction={() => router.push('/library?tab=podcasts')}
             />
             <Rail gap={12} padding={spacing.lg}>
-              {podcastsList.map(pod => (
+              {pinnedPodcasts.map(pod => (
                 <Pressable
                   key={pod.id}
-                  onPress={() => router.push('/library?tab=podcasts')}
+                  onPress={() => {
+                    const target = reconstructItemFromSubscription(pod);
+                    openDetail(target);
+                  }}
                   accessibilityRole="button"
                   style={styles.subPodcastCol}>
                   <View
@@ -409,10 +461,20 @@ export function HomeScreen() {
               onAction={() => router.push('/saved?tab=bookmarks')}
             />
             <Rail gap={10} padding={spacing.lg}>
-              {bookmarks.map(bm => (
+              {bookmarks.map(bm => {
+                const resolvedBm =
+                  bm.item ??
+                  getLiveItemById(bm.itemId) ??
+                  history.find(h => h.id === bm.itemId);
+                const bmArtwork = resolvedBm?.artworkUrl;
+                return (
                 <Pressable
                   key={bm.id}
-                  onPress={() => openDetail(bm.itemId)}
+                  onPress={() => {
+                    const target =
+                      resolvedBm ?? reconstructItemFromBookmark(bm);
+                    openDetail(target);
+                  }}
                   accessibilityRole="button"
                   style={styles.bookmarkWrap}>
                   <Surface tone="subtle" radius="md" style={styles.bookmarkCard}>
@@ -422,12 +484,16 @@ export function HomeScreen() {
                         {
                           backgroundColor: colors.brand.primaryContainer,
                           borderRadius: radius.xs + 2,
+                          overflow: 'hidden',
                         },
                       ]}>
-                      <SimbaIcon
-                        name="heart"
-                        size={20}
-                        color={colors.semantic.error}
+                      <MediaArtwork
+                        uri={bmArtwork}
+                        icon="heart"
+                        iconSize={20}
+                        iconColor={colors.semantic.error}
+                        borderRadius={radius.xs + 2}
+                        style={StyleSheet.absoluteFill}
                       />
                     </View>
                     <View style={styles.bookmarkCopy}>
@@ -446,23 +512,112 @@ export function HomeScreen() {
                         <AppText variant="labelSmall" tone="gold">
                           {bm.positionLabel}
                         </AppText>
-                        <View style={styles.spacer} />
-                        <SimbaIcon
-                          name="heart"
-                          size={13}
-                          color={colors.semantic.error}
-                        />
                       </View>
                     </View>
                   </Surface>
+                </Pressable>
+                );
+              })}
+            </Rail>
+          </>
+        ) : null}
+
+        {/* 5b. Favorite Stations (Radio) — square avatar rail matching Your Subscriptions */}
+        {resolvedFavoriteRadio.length > 0 ? (
+          <>
+            <SectionHeader
+              icon="radio-tower"
+              title="Favorite Stations"
+              action={`All (${favoriteRadioIds.length})`}
+              onAction={() => router.push('/library?tab=stations')}
+            />
+            <Rail gap={12} padding={spacing.lg}>
+              {resolvedFavoriteRadio.map(st => (
+                <Pressable
+                  key={st.id}
+                  onPress={() => openDetail(st)}
+                  accessibilityRole="button"
+                  style={styles.subPodcastCol}>
+                  <View
+                    style={[
+                      styles.subPodcastArt,
+                      {
+                        backgroundColor: colors.accent.goldWash,
+                        borderRadius: radius.sm + 2,
+                        borderColor: colors.border.default,
+                        overflow: 'hidden',
+                      },
+                    ]}>
+                    <MediaArtwork
+                      uri={st.artworkUrl}
+                      icon={st.icon}
+                      iconSize={24}
+                      iconColor={colors.accent.gold}
+                      borderRadius={radius.sm + 2}
+                      style={StyleSheet.absoluteFill}
+                    />
+                  </View>
+                  <AppText
+                    variant="labelSmall"
+                    numberOfLines={1}
+                    style={styles.subPodcastTitle}>
+                    {st.title}
+                  </AppText>
                 </Pressable>
               ))}
             </Rail>
           </>
         ) : null}
 
-        {/* 6. Pinned Playlists — only shown when the user has created real playlists */}
-        {playlistsList.length > 0 ? (
+        {/* 5b-2. Favorite Channels (Live TV) — square avatar rail matching Your Subscriptions */}
+        {resolvedFavoriteChannels.length > 0 ? (
+          <>
+            <SectionHeader
+              icon="access-point"
+              title="Favorite Channels"
+              action={`All (${favoriteTvIds.length})`}
+              onAction={() => router.push('/library?tab=channels')}
+            />
+            <Rail gap={12} padding={spacing.lg}>
+              {resolvedFavoriteChannels.map(ch => (
+                <Pressable
+                  key={ch.id}
+                  onPress={() => openDetail(ch)}
+                  accessibilityRole="button"
+                  style={styles.subPodcastCol}>
+                  <View
+                    style={[
+                      styles.subPodcastArt,
+                      {
+                        backgroundColor: colors.accent.goldWash,
+                        borderRadius: radius.sm + 2,
+                        borderColor: colors.border.default,
+                        overflow: 'hidden',
+                      },
+                    ]}>
+                    <MediaArtwork
+                      uri={ch.artworkUrl}
+                      icon={ch.icon}
+                      iconSize={24}
+                      iconColor={colors.accent.gold}
+                      borderRadius={radius.sm + 2}
+                      style={StyleSheet.absoluteFill}
+                    />
+                  </View>
+                  <AppText
+                    variant="labelSmall"
+                    numberOfLines={1}
+                    style={styles.subPodcastTitle}>
+                    {ch.title}
+                  </AppText>
+                </Pressable>
+              ))}
+            </Rail>
+          </>
+        ) : null}
+
+        {/* 6. Pinned Playlists — ONLY shown for playlists explicitly pinned by the user */}
+        {pinnedPlaylists.length > 0 ? (
           <>
             <SectionHeader
               icon="playlist-music"
@@ -471,7 +626,7 @@ export function HomeScreen() {
               onAction={() => router.push('/library?tab=playlists')}
             />
             <Rail gap={10} padding={spacing.lg}>
-              {playlistsList.map(pl => (
+              {pinnedPlaylists.map(pl => (
                 <Pressable
                   key={pl.id}
                   onPress={() => router.push('/library?tab=playlists')}
@@ -497,7 +652,7 @@ export function HomeScreen() {
                         {pl.name}
                       </AppText>
                       <AppText variant="caption" tone="secondary" numberOfLines={1}>
-                        {`${pl.count} tracks${pl.pinned ? ' • Pinned' : ''}`}
+                        {`${pl.count} ${pl.count === 1 ? 'item' : 'items'} • Pinned`}
                       </AppText>
                     </View>
                   </Surface>
@@ -507,11 +662,6 @@ export function HomeScreen() {
           </>
         ) : null}
 
-        {/* Live Feed Sections — show full sweeping shimmer skeleton while loading so no empty titles leak */}
-        {homeFeed.isLoading ? (
-          <HomeFeedShimmer />
-        ) : (
-          <>
         {/* 7. Curated For You — 238x146 Handpicked Mix Cards (CodecM _buildCuratedForYouSection) */}
         <SectionHeader
           icon="creation"
@@ -772,7 +922,7 @@ export function HomeScreen() {
           {musicAndRadioItems.map(item => (
             <Pressable
               key={item.id}
-              onPress={() => handlePlayItem(item)}
+              onPress={() => openDetail(item)}
               accessibilityRole="button"
               style={({pressed}) => [
                 styles.musicRadioWrap,
@@ -811,13 +961,6 @@ export function HomeScreen() {
         {/* 12. Best for you — 58x58 Media Tiles + Circular Play CTA (CodecM _buildBestForYouSection) */}
         <SectionHeader
           title="Keep Wandering"
-          badge={
-            selectedCategory !== 'all'
-              ? MEDIA_KIND_LABELS[
-                  selectedCategory as keyof typeof MEDIA_KIND_LABELS
-                ]?.toUpperCase() ?? selectedCategory.toUpperCase()
-              : undefined
-          }
           action="View all"
           onAction={() => router.push('/search')}
         />
@@ -906,23 +1049,7 @@ export function HomeScreen() {
           </>
         )}
 
-        {/* Sheet 1: Home Universal FilterSheet */}
-        <FilterSheet
-          visible={filterVisible}
-          onClose={() => setFilterVisible(false)}
-          title="Filter Home Feed"
-          subtitle="Choose a category or sort order for your feed"
-          groups={homeFilterGroups}
-          values={filterValues}
-          onChange={(groupId, nextKeys) =>
-            setFilterValues(prev => ({...prev, [groupId]: nextKeys}))
-          }
-          onReset={() =>
-            setFilterValues({category: ['all'], sort: ['recommended']})
-          }
-        />
-
-        {/* Sheet 2: CuratedMixDetailSheet (CodecM _showCuratedMixSheet) */}
+        {/* CuratedMixDetailSheet (CodecM _showCuratedMixSheet) */}
         <Sheet
           visible={selectedMix !== null}
           onClose={() => setSelectedMix(null)}

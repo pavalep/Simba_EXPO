@@ -7,6 +7,9 @@ import {useSimbaStore} from '../../state/useSimbaStore';
 import {useHomeFeed} from '../../hooks/useHomeFeed';
 import {useCatalogueBrowse} from '../../hooks/useCatalogueBrowse';
 import {
+  isMetadataOnlyGuide,
+  isPodcastShow,
+  registerLiveItem,
   registerLiveItems,
   useSimbaPlayback,
 } from '../../infrastructure/player';
@@ -63,6 +66,12 @@ export function ExploreScreen() {
     commitSearchQuery,
     bookmarks,
     toggleBookmarkItem,
+    favoriteRadioIds,
+    toggleFavoriteRadio,
+    favoriteTvIds,
+    toggleFavoriteTv,
+    podcastsList,
+    toggleFollowPodcast,
   } = useSimbaStore();
   const {playCatalogueItem} = useSimbaPlayback();
   const homeFeed = useHomeFeed();
@@ -133,9 +142,30 @@ export function ExploreScreen() {
     return livePool[0] ?? null;
   }, [livePool]);
 
+  const isShowcasePodcast = isPodcastShow(showcaseItem);
+  const isShowcaseLiveTv = showcaseItem?.kind === 'live-tv';
+  const isShowcaseRadio = showcaseItem?.kind === 'radio';
   const isShowcaseBookmarked = useMemo(
-    () => (showcaseItem ? bookmarks.some(b => b.itemId === showcaseItem.id) : false),
-    [bookmarks, showcaseItem],
+    () =>
+      showcaseItem
+        ? isShowcasePodcast
+          ? podcastsList.some(p => p.title === showcaseItem.title)
+          : isShowcaseLiveTv
+            ? favoriteTvIds.includes(showcaseItem.id)
+            : isShowcaseRadio
+              ? favoriteRadioIds.includes(showcaseItem.id)
+              : bookmarks.some(b => b.itemId === showcaseItem.id)
+        : false,
+    [
+      bookmarks,
+      podcastsList,
+      favoriteTvIds,
+      favoriteRadioIds,
+      showcaseItem,
+      isShowcasePodcast,
+      isShowcaseLiveTv,
+      isShowcaseRadio,
+    ],
   );
 
   const inlineSuggestions = useMemo(() => {
@@ -395,6 +425,11 @@ export function ExploreScreen() {
           </View>
         ) : null}
 
+        {/* Unified Explore Body — full sweeping shimmer while active tab loads */}
+        {!showcaseItem ? (
+          <ShowcaseShimmer />
+        ) : (
+          <>
         {/* Dedicated Catalogue Shortcut when a scope chip is selected */}
         {activeLane ? (
           <View
@@ -441,21 +476,19 @@ export function ExploreScreen() {
         ) : null}
 
         {/* 4. 230dp Featured Showcase Card (CodecM _buildShowcaseCard) */}
-        {!showcaseItem ? (
-          <ShowcaseShimmer />
-        ) : (
         <View
           style={[
             styles.showcaseWrap,
             {paddingHorizontal: spacing.lg},
           ]}>
           <Pressable
-            onPress={() =>
+            onPress={() => {
+              registerLiveItem(showcaseItem);
               router.push({
                 pathname: '/media/[id]',
                 params: {id: showcaseItem.id},
-              })
-            }
+              });
+            }}
             accessibilityRole="button"
             style={[
               styles.showcaseCard,
@@ -504,9 +537,25 @@ export function ExploreScreen() {
               </View>
 
               <Pressable
-                onPress={() => toggleBookmarkItem(showcaseItem)}
+                onPress={() => {
+                  if (isShowcasePodcast) {
+                    toggleFollowPodcast(showcaseItem);
+                  } else if (isShowcaseLiveTv) {
+                    toggleFavoriteTv(showcaseItem);
+                  } else if (isShowcaseRadio) {
+                    toggleFavoriteRadio(showcaseItem);
+                  } else {
+                    toggleBookmarkItem(showcaseItem);
+                  }
+                }}
                 accessibilityRole="button"
-                accessibilityLabel="Bookmark featured pick"
+                accessibilityLabel={
+                  isShowcasePodcast
+                    ? isShowcaseBookmarked
+                      ? 'Unfollow podcast'
+                      : 'Follow podcast'
+                    : 'Bookmark featured pick'
+                }
                 style={[
                   styles.showcaseHeartBtn,
                   {
@@ -515,11 +564,21 @@ export function ExploreScreen() {
                   },
                 ]}>
                 <SimbaIcon
-                  name={isShowcaseBookmarked ? 'heart' : 'heart-outline'}
+                  name={
+                    isShowcasePodcast
+                      ? isShowcaseBookmarked
+                        ? 'check-circle'
+                        : 'podcast'
+                      : isShowcaseBookmarked
+                        ? 'heart'
+                        : 'heart-outline'
+                  }
                   size={17}
                   color={
                     isShowcaseBookmarked
-                      ? colors.semantic.error
+                      ? isShowcasePodcast
+                        ? colors.accent.gold
+                        : colors.semantic.error
                       : colors.text.bright
                   }
                 />
@@ -559,11 +618,23 @@ export function ExploreScreen() {
                   color={colors.text.onMediaMuted}
                 />
                 <AppText variant="caption" tone="mutedOnMedia">
-                  {formatDurationShort(showcaseItem.durationSeconds)}
+                  {isMetadataOnlyGuide(showcaseItem)
+                    ? showcaseItem.year || 'TV Guide'
+                    : formatDurationShort(showcaseItem.durationSeconds)}
                 </AppText>
                 <View style={styles.spacer} />
                 <Pressable
-                  onPress={() => handlePlayItem(showcaseItem)}
+                  onPress={() => {
+                    if (isMetadataOnlyGuide(showcaseItem)) {
+                      registerLiveItem(showcaseItem);
+                      router.push({
+                        pathname: '/media/[id]',
+                        params: {id: showcaseItem.id},
+                      });
+                    } else {
+                      handlePlayItem(showcaseItem);
+                    }
+                  }}
                   accessibilityRole="button"
                   style={[
                     styles.showcaseKindPill,
@@ -573,21 +644,26 @@ export function ExploreScreen() {
                     },
                   ]}>
                   <SimbaIcon
-                    name="play"
+                    name={
+                      isMetadataOnlyGuide(showcaseItem)
+                        ? 'television-classic'
+                        : 'play'
+                    }
                     size={13}
                     color={colors.brand.onPrimary}
                   />
                   <AppText
                     variant="labelSmall"
                     style={{color: colors.brand.onPrimary}}>
-                    {MEDIA_KIND_LABELS[showcaseItem.kind]}
+                    {isMetadataOnlyGuide(showcaseItem)
+                      ? 'TV Guide'
+                      : MEDIA_KIND_LABELS[showcaseItem.kind]}
                   </AppText>
                 </Pressable>
               </View>
             </View>
           </Pressable>
         </View>
-        )}
 
         {/* 5. Canvas-Merged Handpicked Mixes Row -> /curated-mixes */}
         <View
@@ -641,7 +717,14 @@ export function ExploreScreen() {
         <SectionHeader
           title="Worth a listen & watch"
           action="View all"
-          onAction={() => router.push('/search')}
+          onAction={() =>
+            activeLane
+              ? router.push({
+                  pathname: '/catalogue/[lane]',
+                  params: {lane: activeLane.id},
+                })
+              : router.push('/search')
+          }
         />
 
         <View
@@ -652,9 +735,10 @@ export function ExploreScreen() {
           {filteredItems.map((item, idx) => (
             <Pressable
               key={item.id}
-              onPress={() =>
-                router.push({pathname: '/media/[id]', params: {id: item.id}})
-              }
+              onPress={() => {
+                registerLiveItem(item);
+                router.push({pathname: '/media/[id]', params: {id: item.id}});
+              }}
               accessibilityRole="button"
               accessibilityLabel={`Open ${item.title}`}
               style={({pressed}) => [
@@ -704,28 +788,38 @@ export function ExploreScreen() {
                     {(item.rating ?? 4.8).toFixed(1)}
                   </AppText>
                   <AppText variant="caption" tone="tertiary">
-                    {formatDurationShort(item.durationSeconds)}
+                    {isMetadataOnlyGuide(item)
+                      ? item.year || 'Episode Guide'
+                      : formatDurationShort(item.durationSeconds)}
                   </AppText>
                 </View>
               </View>
 
-              <Pressable
-                onPress={() => handlePlayItem(item)}
-                accessibilityRole="button"
-                accessibilityLabel={`Play ${item.title}`}
-                style={[
-                  styles.experiencePlayBtn,
-                  {
-                    backgroundColor: colors.brand.primaryContainer,
-                    borderRadius: radius.full,
-                  },
-                ]}>
+              {isMetadataOnlyGuide(item) ? (
                 <SimbaIcon
-                  name="play"
-                  size={19}
-                  color={colors.brand.onPrimaryContainer}
+                  name="chevron-right"
+                  size={20}
+                  color={colors.text.tertiary}
                 />
-              </Pressable>
+              ) : (
+                <Pressable
+                  onPress={() => handlePlayItem(item)}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Play ${item.title}`}
+                  style={[
+                    styles.experiencePlayBtn,
+                    {
+                      backgroundColor: colors.brand.primaryContainer,
+                      borderRadius: radius.full,
+                    },
+                  ]}>
+                  <SimbaIcon
+                    name="play"
+                    size={19}
+                    color={colors.brand.onPrimaryContainer}
+                  />
+                </Pressable>
+              )}
             </Pressable>
           ))}
 
@@ -735,6 +829,8 @@ export function ExploreScreen() {
             </AppText>
           </View>
         </View>
+          </>
+        )}
 
         <FilterSheet
           visible={filterVisible}

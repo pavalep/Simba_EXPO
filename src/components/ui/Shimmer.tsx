@@ -91,10 +91,87 @@ export function ShimmerBox({
   );
 }
 
-/** Matches HomeScreen's full editorial feed while live catalogues load. */
-export function HomeFeedShimmer() {
+export interface HomeFeedShimmerProps {
+  hasHistory?: boolean;
+  hasSubscriptions?: boolean;
+  hasBookmarks?: boolean;
+  hasPlaylists?: boolean;
+}
+
+/**
+ * Matches HomeScreen's full editorial feed — including personal sections
+ * (Jump Back In, Subscriptions, Saved Bookmarks, Pinned Playlists) when present —
+ * so the entire screen shimmers uniformly with zero static/loaded mixing.
+ */
+export function HomeFeedShimmer({
+  hasHistory = false,
+  hasSubscriptions = false,
+  hasBookmarks = false,
+  hasPlaylists = false,
+}: HomeFeedShimmerProps = {}) {
   return (
     <View style={styles.homeWrap}>
+      {hasHistory ? (
+        <View style={styles.sectionPad}>
+          <View style={styles.headerSkeletonRow}>
+            <ShimmerBox width={136} height={18} borderRadius={radius.xs} />
+            <ShimmerBox width={64} height={14} borderRadius={radius.xs} />
+          </View>
+          <View style={styles.rowGap}>
+            {[0, 1].map(i => (
+              <View key={i} style={styles.squareCol}>
+                <ShimmerBox width={214} height={120} borderRadius={radius.md} />
+                <ShimmerBox width={168} height={13} borderRadius={radius.xs} />
+                <ShimmerBox width={104} height={11} borderRadius={radius.xs} />
+              </View>
+            ))}
+          </View>
+        </View>
+      ) : null}
+
+      {hasSubscriptions ? (
+        <View style={styles.sectionPad}>
+          <View style={styles.headerSkeletonRow}>
+            <ShimmerBox width={154} height={18} borderRadius={radius.xs} />
+            <ShimmerBox width={48} height={14} borderRadius={radius.xs} />
+          </View>
+          <View style={styles.rowGap}>
+            {[0, 1, 2, 3].map(i => (
+              <View key={i} style={styles.squareCol}>
+                <ShimmerBox width={68} height={68} borderRadius={radius.sm + 2} />
+                <ShimmerBox width={58} height={10} borderRadius={radius.xs} />
+              </View>
+            ))}
+          </View>
+        </View>
+      ) : null}
+
+      {hasBookmarks ? (
+        <View style={styles.sectionPad}>
+          <View style={styles.headerSkeletonRow}>
+            <ShimmerBox width={148} height={18} borderRadius={radius.xs} />
+            <ShimmerBox width={46} height={14} borderRadius={radius.xs} />
+          </View>
+          <View style={styles.rowGap}>
+            <ShimmerBox width={220} height={74} borderRadius={radius.md} />
+            <ShimmerBox width={220} height={74} borderRadius={radius.md} />
+          </View>
+        </View>
+      ) : null}
+
+      {hasPlaylists ? (
+        <View style={styles.sectionPad}>
+          <View style={styles.headerSkeletonRow}>
+            <ShimmerBox width={140} height={18} borderRadius={radius.xs} />
+            <ShimmerBox width={48} height={14} borderRadius={radius.xs} />
+          </View>
+          <View style={styles.rowGap}>
+            <ShimmerBox width={208} height={72} borderRadius={radius.md} />
+            <ShimmerBox width={208} height={72} borderRadius={radius.md} />
+          </View>
+        </View>
+      ) : null}
+
       {/* Handpicked Mixes rail */}
       <View style={styles.sectionPad}>
         <View style={styles.headerSkeletonRow}>
@@ -176,13 +253,25 @@ export function HomeFeedShimmer() {
   );
 }
 
-/** Matches ExploreScreen's 230dp Showcase card + list rows. */
+/** Matches ExploreScreen's full body: Browse banner + Showcase + Mixes row + List rows. */
 export function ShowcaseShimmer() {
   return (
     <View style={styles.showcaseWrap}>
+      <ShimmerBox width={156} height={18} borderRadius={radius.xs} />
       <ShimmerBox width="100%" height={230} borderRadius={radius.md} />
+      <View style={styles.rowTile}>
+        <ShimmerBox width={42} height={42} borderRadius={radius.full} />
+        <View style={styles.rowTextCol}>
+          <ShimmerBox width="48%" height={14} borderRadius={radius.xs} />
+          <ShimmerBox width="72%" height={11} borderRadius={radius.xs} />
+        </View>
+      </View>
+      <View style={styles.headerSkeletonRow}>
+        <ShimmerBox width={164} height={18} borderRadius={radius.xs} />
+        <ShimmerBox width={52} height={14} borderRadius={radius.xs} />
+      </View>
       <View style={styles.listGap}>
-        {[0, 1, 2].map(i => (
+        {[0, 1, 2, 3].map(i => (
           <View key={i} style={styles.rowTile}>
             <ShimmerBox width={58} height={58} borderRadius={radius.sm} />
             <View style={styles.rowTextCol}>
@@ -190,6 +279,7 @@ export function ShowcaseShimmer() {
               <ShimmerBox width="52%" height={11} borderRadius={radius.xs} />
               <ShimmerBox width="35%" height={10} borderRadius={radius.xs} />
             </View>
+            <ShimmerBox width={34} height={34} borderRadius={radius.full} />
           </View>
         ))}
       </View>

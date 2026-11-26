@@ -1,4 +1,4 @@
-import React, {useMemo, useState} from 'react';
+import React, {useEffect, useMemo, useState} from 'react';
 import {
   NativeScrollEvent,
   NativeSyntheticEvent,
@@ -25,18 +25,26 @@ import {
   resolvePlayableStreamUrl,
 } from '../../infrastructure/api/mappers';
 import {
+  canBookmarkItem,
   getLiveItemById,
+  isMetadataOnlyGuide,
+  isPodcastShow,
+  reconstructItemFromBookmark,
+  reconstructItemFromSubscription,
+  registerLiveItem,
   useSimbaPlayback,
 } from '../../infrastructure/player';
 import {
   AppText,
   Badge,
   Button,
+  CatalogueListShimmer,
   IconButton,
   MediaArtwork,
   ProgressBar,
   Rail,
   Sheet,
+  ShimmerBox,
   Surface,
   UnderlineTabs,
 } from '../ui';
@@ -81,30 +89,152 @@ export function MediaDetailScreen({id}: MediaDetailScreenProps) {
   const {
     addToQueue,
     playNextInQueue,
+    history,
     bookmarks,
     toggleBookmarkItem,
+    updateBookmarkSnapshot,
     podcastsList,
     toggleFollowPodcast,
+    updateSubscriptionSnapshot,
+    favoriteRadioIds,
+    toggleFavoriteRadio,
+    favoriteTvIds,
+    toggleFavoriteTv,
+    favoriteStations,
     playlistsList,
     createPlaylist,
     addItemToPlaylist,
   } = useSimbaStore();
   const {playCatalogueItem} = useSimbaPlayback();
 
-  const item: CatalogueItem = useMemo(
+  const resolvedItem = useMemo<CatalogueItem | null>(() => {
+    if (!id) {
+      return null;
+    }
+    const fromRegistry = getLiveItemById(id);
+    if (fromRegistry) {
+      return fromRegistry;
+    }
+    const fromHistory = history.find(h => h.id === id);
+    if (fromHistory) {
+      registerLiveItem(fromHistory);
+      return fromHistory;
+    }
+    for (const pl of playlistsList) {
+      const fromPl = pl.items?.find(it => it.id === id);
+      if (fromPl) {
+        registerLiveItem(fromPl);
+        return fromPl;
+      }
+    }
+    const fromBookmark = bookmarks.find(b => b.itemId === id);
+    if (fromBookmark) {
+      return reconstructItemFromBookmark(fromBookmark);
+    }
+    const fromSub = podcastsList.find(p => p.id === id || p.itemId === id);
+    if (fromSub) {
+      return reconstructItemFromSubscription(fromSub);
+    }
+    const fromFavStation = favoriteStations.find(st => st.id === id);
+    if (fromFavStation) {
+      registerLiveItem(fromFavStation);
+      return fromFavStation;
+    }
+    return null;
+  }, [id, history, playlistsList, bookmarks, podcastsList, favoriteStations]);
+
+  const baseItem: CatalogueItem = useMemo(
     () =>
-      (id ? getLiveItemById(id) : undefined) ?? {
+      resolvedItem ?? {
         id: id ?? 'unknown',
-        title: 'Media Title',
-        subtitle: 'Simba',
+        title: 'Title unavailable',
+        subtitle: '',
         kind: 'audio',
         lane: 'audio',
         source: 'api',
         provider: 'Simba',
         icon: 'play-circle-outline',
       },
-    [id],
+    [id, resolvedItem],
   );
+
+  // Auto-hydrate artwork & description when opening a reconstructed legacy bookmark
+  // or minimal item that doesn't yet have its cover art cached.
+  const hydratedMetaQuery = useApiQuery<Partial<CatalogueItem> | null>({
+    queryKey: ['detail-meta', baseItem.provider, baseItem.externalId, baseItem.title],
+    enabled: Boolean(
+      resolvedItem &&
+        ((!baseItem.artworkUrl || !baseItem.externalId) &&
+          (baseItem.externalId || baseItem.provider === 'PodcastIndex')),
+    ),
+    queryFn: async ({signal}) => {
+      if (baseItem.provider === 'PodcastIndex') {
+        const feedId = baseItem.externalId ? Number(baseItem.externalId) : NaN;
+        if (Number.isFinite(feedId) && feedId > 0) {
+          try {
+            const pod = await podcastIndexApi.getPodcastById(feedId, signal);
+            if (pod?.image) {
+              return {
+                artworkUrl: pod.image,
+                synopsis: pod.description || undefined,
+                subtitle: pod.author || baseItem.subtitle,
+                title: pod.title || baseItem.title,
+              };
+            }
+          } catch {
+            // Fall through to title search below
+          }
+        }
+        if (baseItem.title && baseItem.title !== 'Title unavailable') {
+          try {
+            const hits = await podcastIndexApi.searchPodcasts(baseItem.title, 3, signal);
+            const match = hits.find(h => Boolean(h.image)) ?? hits[0];
+            if (match) {
+              return {
+                artworkUrl: match.image || undefined,
+                synopsis: match.description || undefined,
+                subtitle: match.author || baseItem.subtitle,
+                externalId: String(match.id),
+              };
+            }
+          } catch {
+            // ignore
+          }
+        }
+      }
+      if (baseItem.provider === 'Internet Archive' && baseItem.externalId) {
+        return {
+          artworkUrl: `https://archive.org/services/img/${encodeURIComponent(baseItem.externalId)}`,
+        };
+      }
+      return null;
+    },
+    staleTime: 10 * 60_000,
+    retry: 1,
+  });
+
+  const item: CatalogueItem = useMemo(
+    () =>
+      hydratedMetaQuery.data
+        ? {...baseItem, ...hydratedMetaQuery.data}
+        : baseItem,
+    [baseItem, hydratedMetaQuery.data],
+  );
+
+  useEffect(() => {
+    if (hydratedMetaQuery.data?.artworkUrl && resolvedItem) {
+      updateBookmarkSnapshot(item);
+      if (item.kind === 'podcast') {
+        updateSubscriptionSnapshot(item);
+      }
+    }
+  }, [
+    hydratedMetaQuery.data?.artworkUrl,
+    resolvedItem,
+    item,
+    updateBookmarkSnapshot,
+    updateSubscriptionSnapshot,
+  ]);
 
   // Prefetch direct playable stream URL on detail mount (matches main SIMBA's
   // useMovieDetailScreen) so tapping Play Now starts playback immediately with
@@ -194,13 +324,27 @@ export function MediaDetailScreen({id}: MediaDetailScreenProps) {
   const [localNotes, setLocalNotes] = useState<{id: string; at: string; body: string}[]>([]);
 
   const isVideo = item.lane === 'video';
+  const isGuideOnly = isMetadataOnlyGuide(item);
+  const showIsPodcastFeed = isPodcastShow(item);
+  const isLiveChannelOrStation =
+    item.kind === 'radio' || item.kind === 'live-tv';
+  const isFavoriteLive =
+    item.kind === 'radio'
+      ? favoriteRadioIds.includes(item.id)
+      : item.kind === 'live-tv'
+        ? favoriteTvIds.includes(item.id)
+        : false;
+  const allowShowBookmark = canBookmarkItem(item) && !isLiveChannelOrStation;
   const isBookmarked = bookmarks.some(b => b.itemId === item.id);
   const isFollowed = podcastsList.some(
     p => p.title === item.title || item.subtitle?.includes(p.title),
   );
 
   const metrics: {label: string; value: string}[] = [
-    {label: 'Format', value: isVideo ? 'HD Video' : 'High Quality'},
+    {
+      label: isGuideOnly ? 'Type' : 'Format',
+      value: isGuideOnly ? 'TV Guide' : isVideo ? 'HD Video' : 'High Quality',
+    },
   ];
   if (item.durationSeconds) {
     metrics.push({
@@ -261,41 +405,129 @@ export function MediaDetailScreen({id}: MediaDetailScreenProps) {
     ]);
   };
 
+  if (!resolvedItem) {
+    return (
+      <View
+        style={[
+          styles.root,
+          {
+            backgroundColor: colors.background.primary,
+            paddingTop: insets.top + 8,
+            paddingHorizontal: spacing.lg,
+          },
+        ]}>
+        <IconButton
+          name="arrow-left"
+          onPress={() => router.back()}
+          accessibilityLabel="Back"
+        />
+        <View
+          style={{
+            flex: 1,
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: 12,
+            paddingBottom: 64,
+          }}>
+          <SimbaIcon
+            name="alert-circle-outline"
+            size={36}
+            color={colors.accent.gold}
+          />
+          <AppText variant="h3" style={{textAlign: 'center'}}>
+            Title unavailable
+          </AppText>
+          <AppText
+            variant="bodySmall"
+            tone="secondary"
+            style={{textAlign: 'center', maxWidth: 280}}>
+            This item is no longer in your recent catalogue. Try searching for it to open it again.
+          </AppText>
+          <Button label="Go Back" variant="secondary" onPress={() => router.back()} />
+        </View>
+      </View>
+    );
+  }
+
   return (
     <View style={[styles.root, {backgroundColor: colors.background.primary}]}>
-      {/* Scroll-Reactive Blurred Pinned Header (Penpot 05.2 — appears when scrolled >140dp) */}
-      {scrolledPastHero ? (
-        <View
-          style={[
-            styles.pinnedBlurBar,
-            {
-              backgroundColor: colors.background.floating,
-              borderBottomColor: colors.border.subtle,
-              paddingHorizontal: spacing.md,
-              paddingTop: insets.top,
-              height: 56 + insets.top,
-            },
-          ]}>
-          <IconButton
-            name="arrow-left"
-            onPress={() => router.back()}
-            accessibilityLabel="Back"
-          />
+      {/* Permanently Pinned Top Header Controls — transparent over hero, frosted bar once scrolled >140dp */}
+      <View
+        style={[
+          styles.pinnedBlurBar,
+          {
+            backgroundColor: scrolledPastHero
+              ? colors.background.floating
+              : 'transparent',
+            borderBottomColor: scrolledPastHero
+              ? colors.border.subtle
+              : 'transparent',
+            borderBottomWidth: scrolledPastHero ? StyleSheet.hairlineWidth : 0,
+            paddingHorizontal: spacing.lg,
+            paddingTop: insets.top + 8,
+            paddingBottom: 8,
+          },
+        ]}>
+        <IconButton
+          name="arrow-left"
+          onMedia={!scrolledPastHero}
+          onPress={() => router.back()}
+          accessibilityLabel="Back"
+        />
+        {scrolledPastHero ? (
           <AppText variant="title" numberOfLines={1} style={styles.pinnedTitle}>
             {item.title}
           </AppText>
-          <IconButton
-            name="play-circle"
-            onPress={launchPlayer}
-            accessibilityLabel="Play"
-          />
+        ) : (
+          <View style={{flex: 1}} />
+        )}
+        <View style={styles.heroTopActions}>
+          {scrolledPastHero && !isGuideOnly ? (
+            <IconButton
+              name="play-circle"
+              onPress={() => launchPlayer()}
+              accessibilityLabel="Play"
+            />
+          ) : null}
+          {isLiveChannelOrStation ? (
+            <IconButton
+              name={isFavoriteLive ? 'heart' : 'heart-outline'}
+              onMedia={!scrolledPastHero}
+              onPress={() =>
+                item.kind === 'live-tv'
+                  ? toggleFavoriteTv(item)
+                  : toggleFavoriteRadio(item)
+              }
+              accessibilityLabel={
+                item.kind === 'live-tv'
+                  ? isFavoriteLive
+                    ? 'Remove from Favorite Channels'
+                    : 'Add to Favorite Channels'
+                  : isFavoriteLive
+                    ? 'Remove from Favorite Stations'
+                    : 'Add to Favorite Stations'
+              }
+            />
+          ) : null}
+          {allowShowBookmark ? (
+            <IconButton
+              name={isBookmarked ? 'bookmark' : 'bookmark-outline'}
+              onMedia={!scrolledPastHero}
+              onPress={() => toggleBookmarkItem(item)}
+              accessibilityLabel="Toggle bookmark"
+            />
+          ) : null}
           <IconButton
             name="dots-vertical"
-            onPress={() => setActionsVisible(true)}
-            accessibilityLabel="More options"
+            onMedia={!scrolledPastHero}
+            onPress={() => {
+              setSelectedChapter(null);
+              setActionsVisible(true);
+            }}
+            accessibilityLabel="Open media actions sheet"
           />
         </View>
-      ) : null}
+      </View>
 
       <ScrollView
         onScroll={handleScroll}
@@ -308,7 +540,7 @@ export function MediaDetailScreen({id}: MediaDetailScreenProps) {
             styles.hero310,
             {
               backgroundColor: colors.brand.primaryDark,
-              paddingTop: insets.top + 10,
+              paddingTop: insets.top + 56,
               overflow: 'hidden',
             },
           ]}>
@@ -333,49 +565,28 @@ export function MediaDetailScreen({id}: MediaDetailScreenProps) {
               />
             </>
           ) : null}
-          {/* Top Circle Controls over Hero */}
-          <View style={[styles.heroTopBar, {paddingHorizontal: spacing.lg}]}>
-            <IconButton
-              name="arrow-left"
-              onMedia
-              onPress={() => router.back()}
-              accessibilityLabel="Back"
-            />
-            <View style={styles.heroTopActions}>
-              <IconButton
-                name={isBookmarked ? 'bookmark' : 'bookmark-outline'}
-                onMedia
-                onPress={() => toggleBookmarkItem(item)}
-                accessibilityLabel="Toggle bookmark"
-              />
-              <IconButton
-                name="dots-vertical"
-                onMedia
-                onPress={() => setActionsVisible(true)}
-                accessibilityLabel="Open media actions sheet"
-              />
-            </View>
-          </View>
 
-          {/* Center 52dp Circular Play Button (Penpot 05.1) */}
+          {/* Center 52dp Circular Play Button (hidden on TVMaze Episode Guides with no stream) */}
           <View style={styles.heroCenter}>
-            <Pressable
-              onPress={() => launchPlayer()}
-              accessibilityRole="button"
-              accessibilityLabel={`Play ${item.title}`}
-              style={[
-                styles.heroPlayCircle,
-                {
-                  backgroundColor: colors.brand.primary,
-                  borderRadius: radius.full,
-                },
-              ]}>
-              <SimbaIcon
-                name="play"
-                size={26}
-                color={colors.brand.onPrimary}
-              />
-            </Pressable>
+            {!isGuideOnly ? (
+              <Pressable
+                onPress={() => launchPlayer()}
+                accessibilityRole="button"
+                accessibilityLabel={`Play ${item.title}`}
+                style={[
+                  styles.heroPlayCircle,
+                  {
+                    backgroundColor: colors.brand.primary,
+                    borderRadius: radius.full,
+                  },
+                ]}>
+                <SimbaIcon
+                  name="play"
+                  size={26}
+                  color={colors.brand.onPrimary}
+                />
+              </Pressable>
+            ) : null}
           </View>
 
           {/* Bottom Title & Creator Lockup inside 310dp Hero */}
@@ -405,7 +616,7 @@ export function MediaDetailScreen({id}: MediaDetailScreenProps) {
               </AppText>
               {item.kind === 'podcast' ? (
                 <Pressable
-                  onPress={() => toggleFollowPodcast(item.title)}
+                  onPress={() => toggleFollowPodcast(item)}
                   accessibilityRole="button"
                   style={[
                     styles.followPill,
@@ -488,19 +699,35 @@ export function MediaDetailScreen({id}: MediaDetailScreenProps) {
           </View>
         ) : null}
 
-        {/* 4. Primary Action Row (Play Now / Add to Queue / Add to Playlist) */}
+        {/* 4. Primary Action Row (Playable Media vs TVMaze Episode Guide) */}
         <View style={[styles.actionRow, {paddingHorizontal: spacing.lg}]}>
-          <Button label="Play Now" onPress={() => launchPlayer()} />
-          <Button
-            label="Add to Queue"
-            variant="secondary"
-            onPress={() => addToQueue(item)}
-          />
-          <Button
-            label="+ Playlist"
-            variant="secondary"
-            onPress={() => setPlaylistOpen(true)}
-          />
+          {isGuideOnly ? (
+            <>
+              <Button
+                label="Browse Episodes"
+                onPress={() => setTab('Content')}
+              />
+              <Button
+                label="Connect Local Folder"
+                variant="secondary"
+                onPress={() => router.push('/folders')}
+              />
+            </>
+          ) : (
+            <>
+              <Button label="Play Now" onPress={() => launchPlayer()} />
+              <Button
+                label="Add to Queue"
+                variant="secondary"
+                onPress={() => addToQueue(item)}
+              />
+              <Button
+                label="+ Playlist"
+                variant="secondary"
+                onPress={() => setPlaylistOpen(true)}
+              />
+            </>
+          )}
         </View>
 
         {/* 5. Four-Tab Bar: Editorial Underline Tabs (Overview / Content / Notes / Reviews) */}
@@ -519,14 +746,27 @@ export function MediaDetailScreen({id}: MediaDetailScreenProps) {
             <AppText variant="h3">
               {`About this ${MEDIA_KIND_LABELS[item.kind as MediaKind].toLowerCase()}`}
             </AppText>
-            <AppText variant="body" tone="secondary" style={styles.synopsis}>
-              {item.synopsis ??
-                item.meta ??
-                'Available for streaming and offline playback.'}
-            </AppText>
+            {hydratedMetaQuery.isLoading && !item.synopsis ? (
+              <View style={{gap: 8, marginTop: 4}}>
+                <ShimmerBox width="100%" height={13} borderRadius={radius.xs} />
+                <ShimmerBox width="92%" height={13} borderRadius={radius.xs} />
+                <ShimmerBox width="68%" height={13} borderRadius={radius.xs} />
+              </View>
+            ) : (
+              <AppText variant="body" tone="secondary" style={styles.synopsis}>
+                {item.synopsis ??
+                  item.meta ??
+                  'Available for streaming and offline playback.'}
+              </AppText>
+            )}
 
             {/* Quick Episode / Chapter Preview inside Overview */}
-            {extras?.chapters.length ? (
+            {liveChaptersQuery.isLoading ? (
+              <View style={styles.previewSection}>
+                <ShimmerBox width={148} height={16} borderRadius={radius.xs} />
+                <CatalogueListShimmer count={3} />
+              </View>
+            ) : extras?.chapters.length ? (
               <View style={styles.previewSection}>
                 <View style={styles.previewHeadRow}>
                   <AppText variant="title">
@@ -562,12 +802,13 @@ export function MediaDetailScreen({id}: MediaDetailScreenProps) {
                   {relatedItems.map(rel => (
                     <Pressable
                       key={rel.id}
-                      onPress={() =>
+                      onPress={() => {
+                        registerLiveItem(rel);
                         router.replace({
                           pathname: '/media/[id]',
                           params: {id: rel.id},
-                        })
-                      }
+                        });
+                      }}
                       accessibilityRole="button"
                       style={({pressed}) => [
                         styles.relatedRow,
@@ -707,54 +948,135 @@ export function MediaDetailScreen({id}: MediaDetailScreenProps) {
         title={selectedChapter ? selectedChapter.title : item.title}
         subtitle={selectedChapter ? selectedChapter.meta : item.subtitle}>
         <View style={styles.sheetList}>
-          <SheetMenuRow
-            icon="play-circle-outline"
-            label="Play Immediately"
-            onPress={() => {
-              setActionsVisible(false);
-              launchPlayer();
-            }}
-          />
-          <SheetMenuRow
-            icon="playlist-play"
-            label="Play Next in Queue"
-            onPress={() => {
-              playNextInQueue(item);
-              setActionsVisible(false);
-            }}
-          />
-          <SheetMenuRow
-            icon="playlist-plus"
-            label="Add to Queue"
-            onPress={() => {
-              addToQueue(item);
-              setActionsVisible(false);
-            }}
-          />
-          <SheetMenuRow
-            icon="playlist-music-outline"
-            label="Add to Playlist..."
-            onPress={() => {
-              setActionsVisible(false);
-              setPlaylistOpen(true);
-            }}
-          />
-          <SheetMenuRow
-            icon={isBookmarked ? 'bookmark-check' : 'bookmark-outline'}
-            label={isBookmarked ? 'Remove Bookmark' : 'Save Timestamp Bookmark'}
-            onPress={() => {
-              toggleBookmarkItem(item, selectedChapter?.title);
-              setActionsVisible(false);
-            }}
-          />
-          <SheetMenuRow
-            icon="download-outline"
-            label="Download for Offline Playback"
-            onPress={() => {
-              setActionsVisible(false);
-              router.push('/library?tab=downloads');
-            }}
-          />
+          {isGuideOnly ? (
+            <>
+              {!selectedChapter ? (
+                <SheetMenuRow
+                  icon="television-classic"
+                  label="Browse Episodes"
+                  onPress={() => {
+                    setActionsVisible(false);
+                    setTab('Content');
+                  }}
+                />
+              ) : null}
+              <SheetMenuRow
+                icon="folder-outline"
+                label="Connect Local Folder to Play"
+                onPress={() => {
+                  setActionsVisible(false);
+                  router.push('/folders');
+                }}
+              />
+              {!selectedChapter ? (
+                <SheetMenuRow
+                  icon={isBookmarked ? 'bookmark-check' : 'bookmark-outline'}
+                  label={isBookmarked ? 'Remove Bookmark' : 'Bookmark Show'}
+                  onPress={() => {
+                    toggleBookmarkItem(item);
+                    setActionsVisible(false);
+                  }}
+                />
+              ) : null}
+            </>
+          ) : (
+            <>
+              <SheetMenuRow
+                icon="play-circle-outline"
+                label="Play Immediately"
+                onPress={() => {
+                  setActionsVisible(false);
+                  const chapterUrl = (
+                    selectedChapter as (ChapterRow & {streamUrl?: string}) | null
+                  )?.streamUrl;
+                  launchPlayer(chapterUrl, selectedChapter?.title);
+                }}
+              />
+              <SheetMenuRow
+                icon="playlist-play"
+                label="Play Next in Queue"
+                onPress={() => {
+                  playNextInQueue(item);
+                  setActionsVisible(false);
+                }}
+              />
+              <SheetMenuRow
+                icon="playlist-plus"
+                label="Add to Queue"
+                onPress={() => {
+                  addToQueue(item);
+                  setActionsVisible(false);
+                }}
+              />
+              <SheetMenuRow
+                icon="playlist-music-outline"
+                label="Add to Playlist..."
+                onPress={() => {
+                  setActionsVisible(false);
+                  setPlaylistOpen(true);
+                }}
+              />
+              {isLiveChannelOrStation ? (
+                <SheetMenuRow
+                  icon={isFavoriteLive ? 'heart' : 'heart-outline'}
+                  label={
+                    item.kind === 'live-tv'
+                      ? isFavoriteLive
+                        ? 'Remove from Favorite Channels'
+                        : 'Add to Favorite Channels'
+                      : isFavoriteLive
+                        ? 'Remove from Favorite Stations'
+                        : 'Add to Favorite Stations'
+                  }
+                  onPress={() => {
+                    if (item.kind === 'live-tv') {
+                      toggleFavoriteTv(item);
+                    } else {
+                      toggleFavoriteRadio(item);
+                    }
+                    setActionsVisible(false);
+                  }}
+                />
+              ) : showIsPodcastFeed && !selectedChapter ? (
+                <SheetMenuRow
+                  icon={isFollowed ? 'check-circle' : 'podcast'}
+                  label={isFollowed ? 'Unfollow Podcast' : 'Follow Podcast'}
+                  onPress={() => {
+                    toggleFollowPodcast(item);
+                    setActionsVisible(false);
+                  }}
+                />
+              ) : (
+                <SheetMenuRow
+                  icon={isBookmarked ? 'bookmark-check' : 'bookmark-outline'}
+                  label={
+                    selectedChapter
+                      ? 'Bookmark Episode'
+                      : isBookmarked
+                        ? 'Remove Bookmark'
+                        : 'Save Timestamp Bookmark'
+                  }
+                  onPress={() => {
+                    if (selectedChapter) {
+                      const epTarget: CatalogueItem = {
+                        ...item,
+                        id: `podep-${item.externalId ?? item.id}-${selectedChapter.code}`,
+                        title: selectedChapter.title,
+                        subtitle: item.title,
+                        streamUrl:
+                          (selectedChapter as ChapterRow & {streamUrl?: string})
+                            .streamUrl ?? item.streamUrl,
+                      };
+                      toggleBookmarkItem(epTarget, item.title);
+                    } else {
+                      toggleBookmarkItem(item);
+                    }
+                    setActionsVisible(false);
+                  }}
+                />
+              )}
+            </>
+          )}
         </View>
       </Sheet>
 
@@ -893,7 +1215,7 @@ function ChapterItemCard({
   onPlay,
   onMore,
 }: {
-  row: ChapterRow;
+  row: ChapterRow & {streamUrl?: string};
   onPlay: () => void;
   onMore: () => void;
 }) {
@@ -930,12 +1252,14 @@ function ChapterItemCard({
             {row.meta}
           </AppText>
         </View>
-        <IconButton
-          name="play-circle"
-          size={24}
-          onPress={onPlay}
-          accessibilityLabel={`Play ${row.title}`}
-        />
+        {row.streamUrl ? (
+          <IconButton
+            name="play-circle"
+            size={24}
+            onPress={onPlay}
+            accessibilityLabel={`Play ${row.title}`}
+          />
+        ) : null}
         <IconButton
           name="dots-vertical"
           size={18}
@@ -989,11 +1313,13 @@ function SheetMenuRow({
 const styles = StyleSheet.create({
   root: {flex: 1},
   pinnedBlurBar: {
-    height: 56,
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    borderBottomWidth: StyleSheet.hairlineWidth,
     zIndex: 30,
   },
   pinnedTitle: {flex: 1},

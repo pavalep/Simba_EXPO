@@ -7,10 +7,20 @@ import {useSimbaStore} from '../../state/useSimbaStore';
 import {useHomeFeed} from '../../hooks/useHomeFeed';
 import {
   getLiveItemById,
+  registerLiveItem,
   registerLiveItems,
   useSimbaPlayback,
 } from '../../infrastructure/player';
-import {AppText, Badge, Chip, MediaArtwork, Screen, Surface} from '../ui';
+import {
+  AppText,
+  Badge,
+  CatalogueListShimmer,
+  Chip,
+  MediaArtwork,
+  Screen,
+  ShimmerBox,
+  Surface,
+} from '../ui';
 import {
   curatedTopics,
   dailyMixSynthesis,
@@ -153,6 +163,19 @@ export function CuratedMixesScreen() {
 
   return (
     <Screen scroll bottomInset={16} header={stickyHeader}>
+      {homeFeed.isLoading && sortedMixes.length === 0 ? (
+        <View style={{paddingHorizontal: spacing.lg, paddingTop: spacing.md, gap: 16}}>
+          <ShimmerBox width={160} height={14} borderRadius={radius.xs} />
+          <View style={{flexDirection: 'row', gap: 8}}>
+            <ShimmerBox width={96} height={34} borderRadius={radius.pill} />
+            <ShimmerBox width={110} height={34} borderRadius={radius.pill} />
+            <ShimmerBox width={88} height={34} borderRadius={radius.pill} />
+          </View>
+          <ShimmerBox width="100%" height={148} borderRadius={radius.md} />
+          <ShimmerBox width="100%" height={148} borderRadius={radius.md} />
+          <CatalogueListShimmer count={4} />
+        </View>
+      ) : (
       <View style={[styles.container, {paddingHorizontal: spacing.lg, paddingTop: spacing.sm}]}>
 
         {/* 2. Topic Chips ("PERSONALIZE YOUR MIX") */}
@@ -320,9 +343,10 @@ export function CuratedMixesScreen() {
             {recommendedTracks.map((item, idx) => (
               <Pressable
                 key={item.id}
-                onPress={() =>
-                  router.push({pathname: '/media/[id]', params: {id: item.id}})
-                }
+                onPress={() => {
+                  registerLiveItem(item);
+                  router.push({pathname: '/media/[id]', params: {id: item.id}});
+                }}
                 accessibilityRole="button"
                 style={({pressed}) => [
                   styles.trackRow,
@@ -390,6 +414,7 @@ export function CuratedMixesScreen() {
           </View>
         </View>
       </View>
+      )}
     </Screen>
   );
 }

@@ -6,6 +6,10 @@ import {useTheme} from '../../theme/ThemeProvider';
 import {useSimbaStore} from '../../state/useSimbaStore';
 import {useCatalogueBrowse} from '../../hooks/useCatalogueBrowse';
 import {
+  canBookmarkItem,
+  isMetadataOnlyGuide,
+  isPodcastShow,
+  registerLiveItem,
   registerLiveItems,
   useSimbaPlayback,
 } from '../../infrastructure/player';
@@ -57,10 +61,13 @@ export function CatalogueBrowseScreen({
     addToQueue,
     playNextInQueue,
     toggleBookmarkItem,
+    podcastsList,
+    toggleFollowPodcast,
     favoriteRadioIds,
     toggleFavoriteRadio,
     favoriteTvIds,
     toggleFavoriteTv,
+    favoriteStations,
     playlistsList,
   } = useSimbaStore();
   const {playCatalogueItem} = useSimbaPlayback();
@@ -150,21 +157,29 @@ export function CatalogueBrowseScreen({
     if (!onlyFavorites) {
       return liveBrowse.items;
     }
-    return liveBrowse.items.filter(item => {
-      if (lane.id === 'radio') {
-        return favoriteRadioIds.includes(item.id);
+    const targetIds = lane.id === 'radio' ? favoriteRadioIds : favoriteTvIds;
+    const targetKind = lane.id === 'radio' ? 'radio' : 'live-tv';
+    const byId = new Map<string, CatalogueItem>();
+    for (const st of favoriteStations) {
+      if (st.kind === targetKind) {
+        byId.set(st.id, st);
       }
-      if (lane.id === 'livetv') {
-        return favoriteTvIds.includes(item.id);
+    }
+    for (const item of liveBrowse.items) {
+      if (targetIds.includes(item.id)) {
+        byId.set(item.id, item);
       }
-      return true;
-    });
+    }
+    return targetIds
+      .map(id => byId.get(id))
+      .filter((x): x is CatalogueItem => Boolean(x));
   }, [
     liveBrowse.items,
     lane.id,
     onlyFavorites,
     favoriteRadioIds,
     favoriteTvIds,
+    favoriteStations,
   ]);
 
   const isFavorite = (id: string) =>
@@ -172,11 +187,11 @@ export function CatalogueBrowseScreen({
       ? favoriteRadioIds.includes(id)
       : favoriteTvIds.includes(id);
 
-  const toggleFavorite = (id: string) => {
+  const toggleFavorite = (item: CatalogueItem) => {
     if (lane.id === 'radio') {
-      toggleFavoriteRadio(id);
+      toggleFavoriteRadio(item);
     } else if (lane.id === 'livetv') {
-      toggleFavoriteTv(id);
+      toggleFavoriteTv(item);
     }
   };
 
@@ -369,9 +384,10 @@ export function CatalogueBrowseScreen({
             {items.map(item => (
               <Pressable
                 key={item.id}
-                onPress={() =>
-                  router.push({pathname: '/media/[id]', params: {id: item.id}})
-                }
+                onPress={() => {
+                  registerLiveItem(item);
+                  router.push({pathname: '/media/[id]', params: {id: item.id}});
+                }}
                 accessibilityRole="button"
                 style={({pressed}) => [
                   styles.gridCell,
@@ -402,13 +418,36 @@ export function CatalogueBrowseScreen({
                   </View>
                   {lane.hasFavorites ? (
                     <Pressable
-                      onPress={() => toggleFavorite(item.id)}
+                      onPress={e => {
+                        e.stopPropagation();
+                        toggleFavorite(item);
+                      }}
+                      hitSlop={8}
                       accessibilityRole="button"
-                      style={styles.posterTopRight}>
+                      accessibilityLabel={
+                        isFavorite(item.id)
+                          ? `Remove ${item.title} from favorites`
+                          : `Add ${item.title} to favorites`
+                      }
+                      style={[
+                        styles.posterTopRight,
+                        {
+                          width: 32,
+                          height: 32,
+                          borderRadius: 16,
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          backgroundColor: colors.background.onMediaPill,
+                        },
+                      ]}>
                       <SimbaIcon
                         name={isFavorite(item.id) ? 'heart' : 'heart-outline'}
-                        size={18}
-                        color={colors.accent.gold}
+                        size={17}
+                        color={
+                          isFavorite(item.id)
+                            ? colors.semantic.error
+                            : colors.text.bright
+                        }
                       />
                     </Pressable>
                   ) : null}
@@ -428,23 +467,25 @@ export function CatalogueBrowseScreen({
                         : item.year ?? 'LIVE'}
                     </AppText>
                     <View style={styles.cardActions}>
-                      <Pressable
-                        onPress={() => {
-                          void playCatalogueItem(item);
-                          router.push(
-                            item.lane === 'video'
-                              ? '/player/video'
-                              : '/player/audio',
-                          );
-                        }}
-                        accessibilityRole="button"
-                        style={styles.miniIconTap}>
-                        <SimbaIcon
-                          name="play-circle"
-                          size={20}
-                          color={colors.accent.gold}
-                        />
-                      </Pressable>
+                      {!isMetadataOnlyGuide(item) ? (
+                        <Pressable
+                          onPress={() => {
+                            void playCatalogueItem(item);
+                            router.push(
+                              item.lane === 'video'
+                                ? '/player/video'
+                                : '/player/audio',
+                            );
+                          }}
+                          accessibilityRole="button"
+                          style={styles.miniIconTap}>
+                          <SimbaIcon
+                            name="play-circle"
+                            size={20}
+                            color={colors.accent.gold}
+                          />
+                        </Pressable>
+                      ) : null}
                       <Pressable
                         onPress={() => setActionItem(item)}
                         accessibilityRole="button"
@@ -467,9 +508,10 @@ export function CatalogueBrowseScreen({
             {items.map((item, idx) => (
               <Pressable
                 key={item.id}
-                onPress={() =>
-                  router.push({pathname: '/media/[id]', params: {id: item.id}})
-                }
+                onPress={() => {
+                  registerLiveItem(item);
+                  router.push({pathname: '/media/[id]', params: {id: item.id}});
+                }}
                 accessibilityRole="button"
                 style={({pressed}) => [
                   styles.listRowCard,
@@ -527,7 +569,7 @@ export function CatalogueBrowseScreen({
                       <IconButton
                         name={isFavorite(item.id) ? 'heart' : 'heart-outline'}
                         size={18}
-                        onPress={() => toggleFavorite(item.id)}
+                        onPress={() => toggleFavorite(item)}
                         accessibilityLabel="Toggle favorite"
                       />
                     ) : null}
@@ -627,51 +669,116 @@ export function CatalogueBrowseScreen({
         subtitle={actionItem?.subtitle ?? actionItem?.provider}>
         {actionItem ? (
           <View style={styles.sheetMenu}>
-            <ActionSheetRow
-              icon="play-circle-outline"
-              label="Play Now"
-              onPress={() => {
-                const target = actionItem;
-                setActionItem(null);
-                void playCatalogueItem(target);
-                router.push(
-                  target.lane === 'video' ? '/player/video' : '/player/audio',
-                );
-              }}
-            />
-            <ActionSheetRow
-              icon="playlist-play"
-              label="Play Next in Queue"
-              onPress={() => {
-                playNextInQueue(actionItem);
-                setActionItem(null);
-              }}
-            />
-            <ActionSheetRow
-              icon="playlist-plus"
-              label="Add to Playback Queue"
-              onPress={() => {
-                addToQueue(actionItem);
-                setActionItem(null);
-              }}
-            />
-            <ActionSheetRow
-              icon="playlist-music-outline"
-              label="Add to Playlist..."
-              onPress={() => {
-                const target = actionItem;
-                setActionItem(null);
-                setPlaylistTargetItem(target);
-              }}
-            />
-            <ActionSheetRow
-              icon="bookmark-outline"
-              label="Save Bookmark"
-              onPress={() => {
-                toggleBookmarkItem(actionItem);
-                setActionItem(null);
-              }}
-            />
+            {!isMetadataOnlyGuide(actionItem) ? (
+              <>
+                <ActionSheetRow
+                  icon="play-circle-outline"
+                  label="Play Now"
+                  onPress={() => {
+                    const target = actionItem;
+                    setActionItem(null);
+                    void playCatalogueItem(target);
+                    router.push(
+                      target.lane === 'video' ? '/player/video' : '/player/audio',
+                    );
+                  }}
+                />
+                <ActionSheetRow
+                  icon="playlist-play"
+                  label="Play Next in Queue"
+                  onPress={() => {
+                    playNextInQueue(actionItem);
+                    setActionItem(null);
+                  }}
+                />
+                <ActionSheetRow
+                  icon="playlist-plus"
+                  label="Add to Playback Queue"
+                  onPress={() => {
+                    addToQueue(actionItem);
+                    setActionItem(null);
+                  }}
+                />
+                <ActionSheetRow
+                  icon="playlist-music-outline"
+                  label="Add to Playlist..."
+                  onPress={() => {
+                    const target = actionItem;
+                    setActionItem(null);
+                    setPlaylistTargetItem(target);
+                  }}
+                />
+              </>
+            ) : (
+              <>
+                <ActionSheetRow
+                  icon="television-classic"
+                  label="Open Episode Guide"
+                  onPress={() => {
+                    const target = actionItem;
+                    setActionItem(null);
+                    registerLiveItem(target);
+                    router.push({
+                      pathname: '/media/[id]',
+                      params: {id: target.id},
+                    });
+                  }}
+                />
+                <ActionSheetRow
+                  icon="folder-outline"
+                  label="Connect Local Folder to Play"
+                  onPress={() => {
+                    setActionItem(null);
+                    router.push('/folders');
+                  }}
+                />
+              </>
+            )}
+            {lane.hasFavorites ? (
+              <ActionSheetRow
+                icon={isFavorite(actionItem.id) ? 'heart' : 'heart-outline'}
+                label={
+                  isFavorite(actionItem.id)
+                    ? lane.id === 'livetv'
+                      ? 'Remove from Favorite Channels'
+                      : 'Remove from Favorite Stations'
+                    : lane.id === 'livetv'
+                      ? 'Add to Favorite Channels'
+                      : 'Add to Favorite Stations'
+                }
+                onPress={() => {
+                  toggleFavorite(actionItem);
+                  setActionItem(null);
+                }}
+              />
+            ) : null}
+            {isPodcastShow(actionItem) ? (
+              <ActionSheetRow
+                icon={
+                  podcastsList.some(p => p.title === actionItem.title)
+                    ? 'check-circle'
+                    : 'podcast'
+                }
+                label={
+                  podcastsList.some(p => p.title === actionItem.title)
+                    ? 'Unfollow Podcast'
+                    : 'Follow Podcast'
+                }
+                onPress={() => {
+                  toggleFollowPodcast(actionItem);
+                  setActionItem(null);
+                }}
+              />
+            ) : canBookmarkItem(actionItem) ? (
+              <ActionSheetRow
+                icon="bookmark-outline"
+                label="Save Bookmark"
+                onPress={() => {
+                  toggleBookmarkItem(actionItem);
+                  setActionItem(null);
+                }}
+              />
+            ) : null}
           </View>
         ) : null}
       </Sheet>

@@ -181,6 +181,8 @@ export interface SavedBookmarkRecord {
   durationLabel: string;
   sourceLabel: string;
   icon: KindIconName;
+  /** Full persisted item snapshot so bookmarks always open & play after app restarts. */
+  item?: CatalogueItem;
 }
 
 export const savedBookmarks: SavedBookmarkRecord[] = [

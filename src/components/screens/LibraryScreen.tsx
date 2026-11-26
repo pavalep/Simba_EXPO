@@ -1,15 +1,22 @@
-import React, {useState} from 'react';
+import React, {useMemo, useState} from 'react';
 import {Pressable, StyleSheet, TextInput, View} from 'react-native';
 import {SimbaIcon} from '../ui/SimbaIcon';
 import {useRouter} from 'expo-router';
 import {useTheme} from '../../theme/ThemeProvider';
 import {useSimbaStore} from '../../state/useSimbaStore';
 import {
+  getLiveItemById,
+  reconstructItemFromSubscription,
+  registerLiveItem,
+} from '../../infrastructure/player';
+import type {CatalogueItem} from '../../data/dummy';
+import {
   AppText,
   Badge,
   Button,
   Chip,
   IconButton,
+  MediaArtwork,
   Rail,
   Screen,
   Sheet,
@@ -18,7 +25,12 @@ import {
 } from '../ui';
 import {autoDeleteOptions} from '../../data/dummy';
 
-export type LibraryTab = 'podcasts' | 'playlists' | 'local' | 'downloads';
+export type LibraryTab =
+  | 'podcasts'
+  | 'stations'
+  | 'channels'
+  | 'playlists'
+  | 'local';
 
 export interface LibraryScreenProps {
   initialTab?: LibraryTab;
@@ -33,6 +45,29 @@ export interface LibraryScreenProps {
  *   • "Local Audio & Video" (linked to /folders)
  *   • "Downloads" (with Auto-Delete Policy chips: Never / After 7 days / After 30 days / When watched)
  */
+const TAB_META: Record<LibraryTab, {title: string; subtitle: string}> = {
+  podcasts: {
+    title: 'Subscribed Podcasts',
+    subtitle: 'Shows you follow — pin to show on Home',
+  },
+  stations: {
+    title: 'Favorite Stations',
+    subtitle: 'Saved radio stations — pin to show on Home',
+  },
+  channels: {
+    title: 'Favorite Channels',
+    subtitle: 'Saved live TV channels — pin to show on Home',
+  },
+  playlists: {
+    title: 'Playlists',
+    subtitle: 'Your playlists — pin to show on Home',
+  },
+  local: {
+    title: 'On This Phone',
+    subtitle: 'Local audio & video folders',
+  },
+};
+
 export function LibraryScreen({initialTab = 'podcasts'}: LibraryScreenProps) {
   const {colors, spacing, radius} = useTheme();
   const router = useRouter();
@@ -40,17 +75,65 @@ export function LibraryScreen({initialTab = 'podcasts'}: LibraryScreenProps) {
     podcastsList,
     togglePinPodcast,
     toggleFollowPodcast,
+    favoriteRadioIds,
+    toggleFavoriteRadio,
+    favoriteTvIds,
+    toggleFavoriteTv,
+    favoriteStations,
+    pinnedStationIds,
+    togglePinStation,
     playlistsList,
     togglePinPlaylist,
     createPlaylist,
-    downloads,
-    removeDownload,
-    autoDeletePolicy,
-    setAutoDeletePolicy,
     linkedFolders,
   } = useSimbaStore();
 
-  const [tab, setTab] = useState<LibraryTab>(initialTab);
+  const resolvedStations = useMemo<CatalogueItem[]>(() => {
+    const byId = new Map<string, CatalogueItem>();
+    for (const st of favoriteStations) {
+      byId.set(st.id, st);
+    }
+    return favoriteRadioIds.map(
+      id =>
+        byId.get(id) ??
+        getLiveItemById(id) ?? {
+          id,
+          title: 'Saved Station',
+          subtitle: 'Radio',
+          kind: 'radio',
+          lane: 'audio',
+          source: 'api',
+          provider: 'RadioBrowser',
+          icon: 'radio-tower',
+          catalogueLaneId: 'radio',
+        },
+    );
+  }, [favoriteRadioIds, favoriteStations]);
+
+  const resolvedChannels = useMemo<CatalogueItem[]>(() => {
+    const byId = new Map<string, CatalogueItem>();
+    for (const st of favoriteStations) {
+      byId.set(st.id, st);
+    }
+    return favoriteTvIds.map(
+      id =>
+        byId.get(id) ??
+        getLiveItemById(id) ?? {
+          id,
+          title: 'Saved Channel',
+          subtitle: 'Live TV',
+          kind: 'live-tv',
+          lane: 'video',
+          source: 'api',
+          provider: 'IPTV-org',
+          icon: 'access-point',
+          catalogueLaneId: 'livetv',
+        },
+    );
+  }, [favoriteTvIds, favoriteStations]);
+
+  const tab = initialTab;
+  const meta = TAB_META[tab] ?? TAB_META.podcasts;
   const [createOpen, setCreateOpen] = useState(false);
   const [newPlaylistName, setNewPlaylistName] = useState('');
   const [newPlaylistKind, setNewPlaylistKind] = useState<'AUDIO' | 'VIDEO'>('AUDIO');
@@ -71,9 +154,9 @@ export function LibraryScreen({initialTab = 'podcasts'}: LibraryScreenProps) {
         accessibilityLabel="Back"
       />
       <View style={styles.titleCol}>
-        <AppText variant="h2">Your Library</AppText>
+        <AppText variant="h2">{meta.title}</AppText>
         <AppText variant="caption" tone="secondary">
-          Podcasts, playlists, phone media &amp; downloads
+          {meta.subtitle}
         </AppText>
       </View>
       {tab === 'playlists' ? (
@@ -121,22 +204,6 @@ export function LibraryScreen({initialTab = 'podcasts'}: LibraryScreenProps) {
           styles.container,
           {padding: spacing.lg, paddingBottom: spacing.lg},
         ]}>
-
-        {/* 4-Tab Editorial Underline Switcher (zero pill boxes) */}
-        <View style={{marginHorizontal: -spacing.lg}}>
-          <UnderlineTabs
-            scrollable
-            paddingHorizontal={spacing.lg}
-            activeKey={tab}
-            onChange={next => setTab(next as LibraryTab)}
-            options={[
-              {key: 'podcasts', label: `Podcasts (${podcastsList.length})`},
-              {key: 'playlists', label: `Playlists (${playlistsList.length})`},
-              {key: 'local', label: `Folders (${linkedFolders.length})`},
-              {key: 'downloads', label: `Downloads (${downloads.length})`},
-            ]}
-          />
-        </View>
 
         {/* 1. Podcasts (Actionable empty state + canvas-merged rows) */}
         {tab === 'podcasts' ? (
@@ -190,7 +257,13 @@ export function LibraryScreen({initialTab = 'podcasts'}: LibraryScreenProps) {
                     },
                   ]}>
                   <Pressable
-                    onPress={() => router.push('/catalogue/podcasts')}
+                    onPress={() => {
+                      const target = reconstructItemFromSubscription(pod);
+                      router.push({
+                        pathname: '/media/[id]',
+                        params: {id: target.id},
+                      });
+                    }}
                     accessibilityRole="button"
                     style={styles.rowMain}>
                     <View
@@ -199,12 +272,16 @@ export function LibraryScreen({initialTab = 'podcasts'}: LibraryScreenProps) {
                         {
                           backgroundColor: colors.brand.primaryContainer,
                           borderRadius: radius.full,
+                          overflow: 'hidden',
                         },
                       ]}>
-                      <SimbaIcon
-                        name={pod.icon}
-                        size={22}
-                        color={colors.brand.onPrimaryContainer}
+                      <MediaArtwork
+                        uri={pod.artworkUrl}
+                        icon={pod.icon}
+                        iconSize={22}
+                        iconColor={colors.brand.onPrimaryContainer}
+                        borderRadius={radius.full}
+                        style={StyleSheet.absoluteFill}
                       />
                     </View>
                     <View style={styles.rowCopy}>
@@ -216,7 +293,9 @@ export function LibraryScreen({initialTab = 'podcasts'}: LibraryScreenProps) {
                         {pod.title}
                       </AppText>
                       <AppText variant="caption" tone="secondary">
-                        {`${pod.author} · ${pod.episodes} episodes`}
+                        {pod.episodes > 0
+                          ? `${pod.author} · ${pod.episodes} episodes`
+                          : pod.author}
                       </AppText>
                     </View>
                   </Pressable>
@@ -237,6 +316,148 @@ export function LibraryScreen({initialTab = 'podcasts'}: LibraryScreenProps) {
             )}
           </View>
         ) : null}
+
+        {/* 1b. Favorite Stations (Radio) & Favorite Channels (Live TV) with Pin-to-Home */}
+        {tab === 'stations' || tab === 'channels'
+          ? (() => {
+              const isChannels = tab === 'channels';
+              const list = isChannels ? resolvedChannels : resolvedStations;
+              return (
+                <View style={[styles.list, {gap: 0}]}>
+                  {list.length === 0 ? (
+                    <View style={styles.emptyStateWrap}>
+                      <View
+                        style={[
+                          styles.emptyIconCircle,
+                          {
+                            backgroundColor: colors.brand.primaryContainer,
+                            borderRadius: radius.full,
+                          },
+                        ]}>
+                        <SimbaIcon
+                          name={isChannels ? 'access-point' : 'radio-tower'}
+                          size={28}
+                          color={colors.brand.onPrimaryContainer}
+                        />
+                      </View>
+                      <AppText variant="h3" style={styles.emptyTitle}>
+                        {isChannels
+                          ? 'No favorite channels yet'
+                          : 'No favorite stations yet'}
+                      </AppText>
+                      <AppText
+                        variant="bodySmall"
+                        tone="secondary"
+                        style={styles.emptyBody}>
+                        {isChannels
+                          ? 'Heart any Live TV channel to save it here. Pin your favorites to show them on Home.'
+                          : 'Heart any Radio station to save it here. Pin your favorites to show them on Home.'}
+                      </AppText>
+                      <View style={styles.emptyCta}>
+                        <Button
+                          label={isChannels ? 'Browse Live TV' : 'Browse Radio'}
+                          onPress={() =>
+                            router.push(
+                              isChannels
+                                ? '/catalogue/livetv'
+                                : '/catalogue/radio',
+                            )
+                          }
+                        />
+                      </View>
+                    </View>
+                  ) : (
+                    list.map((st, idx) => {
+                      const isPinned = pinnedStationIds.includes(st.id);
+                      return (
+                        <View
+                          key={st.id}
+                          style={[
+                            styles.rowCard,
+                            {
+                              paddingHorizontal: 0,
+                              paddingVertical: 14,
+                              borderBottomWidth:
+                                idx === list.length - 1
+                                  ? 0
+                                  : StyleSheet.hairlineWidth,
+                              borderBottomColor: colors.border.subtle,
+                            },
+                          ]}>
+                          <Pressable
+                            onPress={() => {
+                              registerLiveItem(st);
+                              router.push({
+                                pathname: '/media/[id]',
+                                params: {id: st.id},
+                              });
+                            }}
+                            accessibilityRole="button"
+                            style={styles.rowMain}>
+                            <View
+                              style={[
+                                styles.iconBox,
+                                {
+                                  backgroundColor: colors.accent.goldWash,
+                                  borderRadius: radius.full,
+                                  overflow: 'hidden',
+                                },
+                              ]}>
+                              <MediaArtwork
+                                uri={st.artworkUrl}
+                                icon={st.icon}
+                                iconSize={22}
+                                iconColor={colors.accent.gold}
+                                borderRadius={radius.full}
+                                style={StyleSheet.absoluteFill}
+                              />
+                            </View>
+                            <View style={styles.rowCopy}>
+                              <View style={styles.badgeRow}>
+                                <Badge
+                                  label={isChannels ? 'Live TV' : 'Radio'}
+                                  tone="gold"
+                                />
+                                {isPinned ? <Badge label="Pinned" /> : null}
+                              </View>
+                              <AppText variant="title" numberOfLines={1}>
+                                {st.title}
+                              </AppText>
+                              <AppText
+                                variant="caption"
+                                tone="secondary"
+                                numberOfLines={1}>
+                                {st.subtitle ||
+                                  (isChannels ? 'Live TV' : 'Radio')}
+                              </AppText>
+                            </View>
+                          </Pressable>
+                          <IconButton
+                            name={isPinned ? 'pin' : 'pin-outline'}
+                            size={18}
+                            onPress={() => togglePinStation(st.id)}
+                            accessibilityLabel={
+                              isPinned ? 'Unpin from Home' : 'Pin to Home'
+                            }
+                          />
+                          <IconButton
+                            name="close"
+                            size={18}
+                            onPress={() =>
+                              isChannels
+                                ? toggleFavoriteTv(st)
+                                : toggleFavoriteRadio(st)
+                            }
+                            accessibilityLabel={`Remove ${st.title} from favorites`}
+                          />
+                        </View>
+                      );
+                    })
+                  )}
+                </View>
+              );
+            })()
+          : null}
 
         {/* 2. Playlists (Actionable empty state + canvas-merged rows) */}
         {tab === 'playlists' ? (
@@ -406,131 +627,6 @@ export function LibraryScreen({initialTab = 'podcasts'}: LibraryScreenProps) {
                     </AppText>
                   </View>
                 </Pressable>
-              ))
-            )}
-          </View>
-        ) : null}
-
-        {/* 4. Offline Downloads + Auto-Delete Policy (Canvas-merged) */}
-        {tab === 'downloads' ? (
-          <View style={styles.list}>
-            <View
-              style={[
-                styles.policyCard,
-                {
-                  paddingHorizontal: 0,
-                  paddingTop: 4,
-                  paddingBottom: 16,
-                  borderBottomWidth: StyleSheet.hairlineWidth,
-                  borderBottomColor: colors.border.subtle,
-                },
-              ]}>
-              <AppText variant="overline" tone="gold">
-                AUTO-DELETE COMPLETED DOWNLOADS
-              </AppText>
-              <View style={styles.policyChips}>
-                {autoDeleteOptions.map(opt => (
-                  <Chip
-                    key={opt}
-                    label={opt}
-                    selected={autoDeletePolicy === opt}
-                    onPress={() => setAutoDeletePolicy(opt)}
-                  />
-                ))}
-              </View>
-            </View>
-
-            {downloads.length === 0 ? (
-              <View style={styles.emptyStateWrap}>
-                <View
-                  style={[
-                    styles.emptyIconCircle,
-                    {
-                      backgroundColor: colors.brand.primaryContainer,
-                      borderRadius: radius.full,
-                    },
-                  ]}>
-                  <SimbaIcon
-                    name="download-circle-outline"
-                    size={28}
-                    color={colors.brand.onPrimaryContainer}
-                  />
-                </View>
-                <AppText variant="h3" style={styles.emptyTitle}>
-                  Nothing downloaded yet
-                </AppText>
-                <AppText
-                  variant="bodySmall"
-                  tone="secondary"
-                  style={styles.emptyBody}>
-                  Save tracks or episodes to listen offline on flights and commutes.
-                </AppText>
-                <View style={styles.emptyCta}>
-                  <Button
-                    label="Explore Media"
-                    onPress={() => router.push('/(tabs)/explore')}
-                  />
-                </View>
-              </View>
-            ) : (
-              downloads.map((dl, idx) => (
-                <View
-                  key={dl.id}
-                  style={[
-                    styles.rowCard,
-                    {
-                      paddingHorizontal: 0,
-                      paddingVertical: 14,
-                      borderBottomWidth:
-                        idx === downloads.length - 1
-                          ? 0
-                          : StyleSheet.hairlineWidth,
-                      borderBottomColor: colors.border.subtle,
-                    },
-                  ]}>
-                  <Pressable
-                    onPress={() =>
-                      router.push({
-                        pathname: '/media/[id]',
-                        params: {id: dl.itemId},
-                      })
-                    }
-                    accessibilityRole="button"
-                    style={styles.rowMain}>
-                    <View
-                      style={[
-                        styles.iconBox,
-                        {
-                          backgroundColor: colors.brand.primaryContainer,
-                          borderRadius: radius.full,
-                        },
-                      ]}>
-                      <SimbaIcon
-                        name="download-circle-outline"
-                        size={22}
-                        color={colors.brand.onPrimaryContainer}
-                      />
-                    </View>
-                    <View style={styles.rowCopy}>
-                      <View style={styles.badgeRow}>
-                        <Badge label={dl.status} tone="gold" />
-                        <Badge label={dl.sizeLabel} />
-                      </View>
-                      <AppText variant="title" numberOfLines={1}>
-                        {dl.title}
-                      </AppText>
-                      <AppText variant="caption" tone="tertiary">
-                        {dl.subtitle}
-                      </AppText>
-                    </View>
-                  </Pressable>
-                  <IconButton
-                    name="delete-outline"
-                    size={18}
-                    onPress={() => removeDownload(dl.id)}
-                    accessibilityLabel={`Delete download ${dl.title}`}
-                  />
-                </View>
               ))
             )}
           </View>

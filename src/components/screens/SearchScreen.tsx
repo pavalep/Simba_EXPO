@@ -6,6 +6,9 @@ import {useTheme} from '../../theme/ThemeProvider';
 import {useSimbaStore} from '../../state/useSimbaStore';
 import {useUniversalSearch} from '../../hooks/useUniversalSearch';
 import {
+  isMetadataOnlyGuide,
+  isPodcastShow,
+  registerLiveItem,
   registerLiveItems,
   useSimbaPlayback,
 } from '../../infrastructure/player';
@@ -78,6 +81,12 @@ export function SearchScreen(props: SearchScreenProps = {}) {
     clearRecentSearches,
     bookmarks,
     toggleBookmarkItem,
+    favoriteRadioIds,
+    toggleFavoriteRadio,
+    favoriteTvIds,
+    toggleFavoriteTv,
+    podcastsList,
+    toggleFollowPodcast,
   } = useSimbaStore();
   const {playCatalogueItem} = useSimbaPlayback();
 
@@ -574,16 +583,26 @@ export function SearchScreen(props: SearchScreenProps = {}) {
 
             <View style={styles.resultsList}>
               {results.map((item, idx) => {
-                const isSaved = bookmarks.some(b => b.itemId === item.id);
+                const isPodShow = isPodcastShow(item);
+                const isLiveTv = item.kind === 'live-tv';
+                const isRadio = item.kind === 'radio';
+                const isSaved = isPodShow
+                  ? podcastsList.some(p => p.title === item.title)
+                  : isLiveTv
+                    ? favoriteTvIds.includes(item.id)
+                    : isRadio
+                      ? favoriteRadioIds.includes(item.id)
+                      : bookmarks.some(b => b.itemId === item.id);
                 return (
                   <Pressable
                     key={item.id}
-                    onPress={() =>
+                    onPress={() => {
+                      registerLiveItem(item);
                       router.push({
                         pathname: '/media/[id]',
                         params: {id: item.id},
-                      })
-                    }
+                      });
+                    }}
                     accessibilityRole="button"
                     style={({pressed}) => [
                       styles.resultTile,
@@ -642,35 +661,70 @@ export function SearchScreen(props: SearchScreenProps = {}) {
 
                     <View style={styles.resultRightActions}>
                       <Pressable
-                        onPress={() => toggleBookmarkItem(item)}
+                        onPress={() =>
+                          isPodShow
+                            ? toggleFollowPodcast(item)
+                            : isLiveTv
+                              ? toggleFavoriteTv(item)
+                              : isRadio
+                                ? toggleFavoriteRadio(item)
+                                : toggleBookmarkItem(item)
+                        }
                         accessibilityRole="button"
+                        accessibilityLabel={
+                          isPodShow
+                            ? isSaved
+                              ? 'Unfollow podcast'
+                              : 'Follow podcast'
+                            : isSaved
+                              ? 'Remove bookmark'
+                              : 'Save bookmark'
+                        }
                         style={styles.smallTap}>
                         <SimbaIcon
-                          name={isSaved ? 'heart' : 'heart-outline'}
+                          name={
+                            isPodShow
+                              ? isSaved
+                                ? 'check-circle'
+                                : 'podcast'
+                              : isSaved
+                                ? 'heart'
+                                : 'heart-outline'
+                          }
                           size={19}
                           color={
                             isSaved
-                              ? colors.semantic.error
+                              ? isPodShow
+                                ? colors.accent.gold
+                                : colors.semantic.error
                               : colors.text.tertiary
                           }
                         />
                       </Pressable>
-                      <Pressable
-                        onPress={() => handlePlayItem(item)}
-                        accessibilityRole="button"
-                        style={[
-                          styles.resultPlayCircle,
-                          {
-                            backgroundColor: colors.brand.primaryContainer,
-                            borderRadius: radius.full,
-                          },
-                        ]}>
+                      {isMetadataOnlyGuide(item) ? (
                         <SimbaIcon
-                          name="play"
-                          size={19}
-                          color={colors.brand.onPrimaryContainer}
+                          name="chevron-right"
+                          size={20}
+                          color={colors.text.tertiary}
                         />
-                      </Pressable>
+                      ) : (
+                        <Pressable
+                          onPress={() => handlePlayItem(item)}
+                          accessibilityRole="button"
+                          style={[
+                            styles.resultPlayCircle,
+                            {
+                              backgroundColor: colors.brand.primaryContainer,
+                              borderRadius: radius.full,
+                            },
+                          ]}>
+                          <SimbaIcon
+                            name="play"
+                            size={19}
+                            color={colors.brand.onPrimaryContainer}
+                          />
+                        </Pressable>
+                      )}
                     </View>
                   </Pressable>
                 );

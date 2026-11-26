@@ -88,6 +88,7 @@ export function Screen({
               {paddingBottom: resolvedBottom},
             ]}
             showsVerticalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
             scrollEventThrottle={120}
             onScrollBeginDrag={() => {
               userDraggedRef.current = true;

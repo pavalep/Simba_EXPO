@@ -14,7 +14,7 @@ import {
   type MpvChapter,
   type MpvFileInfo,
 } from '@simba-dev/react-native-media-player';
-import type {CatalogueItem} from '../../data/dummy';
+import type {CatalogueItem, SavedBookmarkRecord} from '../../data/dummy';
 import {useSimbaStore} from '../../state/useSimbaStore';
 import {
   isArchiveDirectoryUrl,
@@ -74,6 +74,186 @@ export function registerLiveItem(item: CatalogueItem): void {
 
 export function getLiveItemById(id: string): CatalogueItem | undefined {
   return liveItemRegistry.get(id);
+}
+
+/**
+ * Domain rule: A podcast SHOW/FEED (`kind === 'podcast'` without an episode ID
+ * or direct episode stream URL) can only be Followed / Subscribed, NOT bookmarked.
+ * Individual podcast episodes (with `podep-` ID or a direct audio enclosure URL),
+ * movies, music tracks, audiobooks, shows, and archive tracks CAN be bookmarked.
+ */
+export function isPodcastShow(
+  item: CatalogueItem | null | undefined,
+): boolean {
+  if (!item || item.kind !== 'podcast') {
+    return false;
+  }
+  if (item.id.startsWith('podep-') || Boolean(item.streamUrl)) {
+    return false;
+  }
+  return true;
+}
+
+export function canBookmarkItem(
+  item: CatalogueItem | null | undefined,
+): boolean {
+  if (!item) {
+    return false;
+  }
+  if (item.kind === 'live-tv' || item.kind === 'radio') {
+    return false;
+  }
+  return !isPodcastShow(item);
+}
+
+/**
+ * True for TVMaze show guide entries that have no direct stream URL.
+ * TVMaze is a metadata-only TV guide API (matching original SIMBA's
+ * ShowDetailScreen, where playback only activates when matched to a local file).
+ */
+export function isMetadataOnlyGuide(
+  item: CatalogueItem | null | undefined,
+): boolean {
+  return Boolean(item && item.provider === 'TVMaze' && !item.streamUrl);
+}
+
+/**
+ * Reconstructs a valid `CatalogueItem` from a persisted `SavedBookmarkRecord`
+ * (including legacy bookmarks saved before full `item` snapshots were stored)
+ * by decoding the canonical provider prefix in `itemId`.
+ */
+export function reconstructItemFromBookmark(
+  bm: SavedBookmarkRecord,
+): CatalogueItem {
+  if (bm.item) {
+    registerLiveItem(bm.item);
+    return bm.item;
+  }
+  const id = bm.itemId;
+  let provider = bm.sourceLabel || 'Simba';
+  let externalId: string | undefined;
+  let kind: CatalogueItem['kind'] = 'audio';
+  let lane: CatalogueItem['lane'] = 'audio';
+  let icon: CatalogueItem['icon'] = 'play-circle-outline';
+  let catalogueLaneId: string | undefined;
+
+  if (id.startsWith('pod-') || id.startsWith('podep-')) {
+    provider = 'PodcastIndex';
+    externalId = id.replace(/^podep?-/, '');
+    kind = 'podcast';
+    lane = 'audio';
+    icon = 'podcast';
+    catalogueLaneId = 'podcasts';
+  } else if (id.startsWith('ia-movie-')) {
+    provider = 'Internet Archive';
+    externalId = id.slice('ia-movie-'.length);
+    kind = 'movie';
+    lane = 'video';
+    icon = 'movie-open-outline';
+    catalogueLaneId = 'movies';
+  } else if (id.startsWith('ia-arc-')) {
+    provider = 'Internet Archive';
+    externalId = id.slice('ia-arc-'.length);
+    kind = 'archive-audio';
+    lane = 'audio';
+    icon = 'archive-outline';
+    catalogueLaneId = 'archive';
+  } else if (id.startsWith('tvmaze-')) {
+    provider = 'TVMaze';
+    externalId = id.slice('tvmaze-'.length);
+    kind = 'video';
+    lane = 'video';
+    icon = 'television-classic';
+    catalogueLaneId = 'shows';
+  } else if (id.startsWith('jam-')) {
+    provider = 'Jamendo';
+    externalId = id.slice('jam-'.length);
+    kind = 'music';
+    lane = 'audio';
+    icon = 'music-clef-treble';
+    catalogueLaneId = 'music';
+  } else if (id.startsWith('aud-')) {
+    provider = 'Audius';
+    externalId = id.slice('aud-'.length);
+    kind = 'music';
+    lane = 'audio';
+    icon = 'music-clef-treble';
+    catalogueLaneId = 'music';
+  } else if (id.startsWith('rad-')) {
+    provider = 'RadioBrowser';
+    externalId = id.slice('rad-'.length);
+    kind = 'radio';
+    lane = 'audio';
+    icon = 'radio-tower';
+    catalogueLaneId = 'radio';
+  } else if (id.startsWith('iptv-')) {
+    provider = 'IPTV-org';
+    externalId = id.slice('iptv-'.length);
+    kind = 'live-tv';
+    lane = 'video';
+    icon = 'access-point';
+    catalogueLaneId = 'livetv';
+  } else if (id.startsWith('lbv-')) {
+    provider = 'LibriVox';
+    externalId = id.slice('lbv-'.length);
+    kind = 'audiobook';
+    lane = 'audio';
+    icon = 'book-open-page-variant-outline';
+    catalogueLaneId = 'audiobooks';
+  }
+
+  const reconstructed: CatalogueItem = {
+    id,
+    externalId,
+    title: bm.at || bm.label.replace(/^\d+:\d+\s*·\s*/, '') || 'Saved Item',
+    subtitle: bm.note || provider,
+    kind,
+    lane,
+    source: 'api',
+    provider,
+    icon,
+    catalogueLaneId,
+  };
+  registerLiveItem(reconstructed);
+  return reconstructed;
+}
+
+/**
+ * Reconstructs a playable/detail-ready podcast `CatalogueItem` from a
+ * persisted `FollowedPodcastRecord` (including legacy subscriptions saved
+ * before full `item` snapshots were stored).
+ */
+export function reconstructItemFromSubscription(pod: {
+  id: string;
+  itemId?: string;
+  title: string;
+  author: string;
+  artworkUrl?: string;
+  item?: CatalogueItem;
+}): CatalogueItem {
+  if (pod.item) {
+    registerLiveItem(pod.item);
+    return pod.item;
+  }
+  const id = pod.itemId || pod.id;
+  const externalId = id.startsWith('pod-')
+    ? id.slice('pod-'.length)
+    : undefined;
+  const reconstructed: CatalogueItem = {
+    id,
+    externalId,
+    title: pod.title,
+    subtitle: pod.author && pod.author !== 'Podcast' ? pod.author : pod.title,
+    kind: 'podcast',
+    lane: 'audio',
+    source: 'api',
+    provider: 'PodcastIndex',
+    icon: 'podcast',
+    artworkUrl: pod.artworkUrl,
+    catalogueLaneId: 'podcasts',
+  };
+  registerLiveItem(reconstructed);
+  return reconstructed;
 }
 
 // ─── Pending Video Stream Cache ─────────────────────────────────────────────

@@ -24,7 +24,7 @@ const STANDARD_PHONE_FOLDERS: QuickFolderPreset[] = [
     name: 'Downloads',
     path: 'Phone Storage / Download',
     formats: 'Audio & video files',
-    icon: 'download-circle-outline',
+    icon: 'folder-outline',
   },
   {
     name: 'Movies',

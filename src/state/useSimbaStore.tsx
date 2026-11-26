@@ -30,11 +30,68 @@ import {
   type UserProfileMeta,
 } from '../infrastructure/persistence/profileStorage';
 import {signInSilently} from '../services/authService';
+import {
+  canBookmarkItem,
+  registerLiveItem,
+  registerLiveItems,
+} from '../infrastructure/player';
+
+function isDisallowedBookmark(bm: SavedBookmarkRecord): boolean {
+  if (
+    bm.item?.kind === 'live-tv' ||
+    bm.item?.kind === 'radio' ||
+    bm.itemId.startsWith('iptv-') ||
+    bm.itemId.startsWith('rad-')
+  ) {
+    return true;
+  }
+  return false;
+}
+
+function isCorruptedPlaceholderItem(item: CatalogueItem): boolean {
+  return (
+    item.title === 'Media Title' &&
+    item.provider === 'Simba' &&
+    !item.streamUrl &&
+    !item.externalId
+  );
+}
+
+function hydrateRegistryFromSnapshot(snap: PersistedProfileSnapshot): void {
+  const items: CatalogueItem[] = [];
+  for (const h of snap.history) {
+    if (!isCorruptedPlaceholderItem(h)) {
+      items.push(h);
+    }
+  }
+  for (const bm of snap.bookmarks) {
+    if (bm.item) {
+      items.push(bm.item);
+    }
+  }
+  for (const pl of snap.playlistsList) {
+    if (Array.isArray(pl.items)) {
+      items.push(...pl.items);
+    }
+  }
+  for (const pod of snap.podcastsList) {
+    if (pod.item) {
+      items.push(pod.item);
+    }
+  }
+  if (Array.isArray(snap.favoriteStations)) {
+    items.push(...snap.favoriteStations);
+  }
+  if (items.length > 0) {
+    registerLiveItems(items);
+  }
+}
 
 export type {ProfilePreferences, UserProfileMeta};
 
 export interface FollowedPodcastRecord {
   id: string;
+  itemId?: string;
   title: string;
   author: string;
   episodes: number;
@@ -42,6 +99,7 @@ export interface FollowedPodcastRecord {
   pinned: boolean;
   icon: KindIconName;
   artworkUrl?: string;
+  item?: CatalogueItem;
 }
 
 export interface PlaylistRecord {
@@ -51,6 +109,7 @@ export interface PlaylistRecord {
   kindLabel: string;
   lane: 'audio' | 'video';
   itemIds: string[];
+  items?: CatalogueItem[];
   pinned: boolean;
   icon: KindIconName;
 }
@@ -120,6 +179,7 @@ export interface SimbaState {
   // Personal Library: Bookmarks, Playlists, Mixes, Subscriptions, Favorites (02.x, 04.5, 04.6, 07.x)
   bookmarks: SavedBookmarkRecord[];
   toggleBookmarkItem: (item: CatalogueItem, note?: string) => void;
+  updateBookmarkSnapshot: (item: CatalogueItem) => void;
   removeBookmark: (id: string) => void;
   clearBookmarks: () => void;
 
@@ -140,13 +200,20 @@ export interface SimbaState {
   togglePinMix: (id: string) => void;
 
   podcastsList: FollowedPodcastRecord[];
-  toggleFollowPodcast: (titleOrId: string, artworkUrl?: string) => void;
+  toggleFollowPodcast: (
+    titleOrItem: string | CatalogueItem,
+    artworkUrl?: string,
+  ) => void;
+  updateSubscriptionSnapshot: (item: CatalogueItem) => void;
   togglePinPodcast: (id: string) => void;
 
   favoriteRadioIds: string[];
-  toggleFavoriteRadio: (id: string) => void;
+  toggleFavoriteRadio: (idOrItem: string | CatalogueItem) => void;
   favoriteTvIds: string[];
-  toggleFavoriteTv: (id: string) => void;
+  toggleFavoriteTv: (idOrItem: string | CatalogueItem) => void;
+  favoriteStations: CatalogueItem[];
+  pinnedStationIds: string[];
+  togglePinStation: (id: string) => void;
 
   // Equalizer (06.2)
   eqPreset: string;
@@ -209,7 +276,14 @@ export function SimbaStoreProvider({children}: {children: React.ReactNode}) {
     null,
   );
   const [undoMessage, setUndoMessage] = useState<string | null>(null);
-  const [history, setHistory] = useState<CatalogueItem[]>(initialSnapshot.history);
+  const [history, setHistory] = useState<CatalogueItem[]>(() =>
+    initialSnapshot.history.filter(h => !isCorruptedPlaceholderItem(h)),
+  );
+
+  // Hydrate the in-memory liveItemRegistry from persisted history, bookmarks & playlists on boot
+  useEffect(() => {
+    hydrateRegistryFromSnapshot(initialSnapshot);
+  }, [initialSnapshot]);
 
   // Search recent — persisted per profile
   const [recentSearches, setRecentSearches] = useState<string[]>(
@@ -217,8 +291,8 @@ export function SimbaStoreProvider({children}: {children: React.ReactNode}) {
   );
 
   // Library collections — persisted per profile
-  const [bookmarks, setBookmarks] = useState<SavedBookmarkRecord[]>(
-    initialSnapshot.bookmarks,
+  const [bookmarks, setBookmarks] = useState<SavedBookmarkRecord[]>(() =>
+    initialSnapshot.bookmarks.filter(b => !isDisallowedBookmark(b)),
   );
   const [playlistsList, setPlaylistsList] = useState<PlaylistRecord[]>(
     initialSnapshot.playlistsList,
@@ -235,6 +309,12 @@ export function SimbaStoreProvider({children}: {children: React.ReactNode}) {
   );
   const [favoriteTvIds, setFavoriteTvIds] = useState<string[]>(
     initialSnapshot.favoriteTvIds,
+  );
+  const [favoriteStations, setFavoriteStations] = useState<CatalogueItem[]>(
+    initialSnapshot.favoriteStations ?? [],
+  );
+  const [pinnedStationIds, setPinnedStationIds] = useState<string[]>(
+    initialSnapshot.pinnedStationIds ?? [],
   );
 
   // Equalizer — persisted per profile
@@ -269,6 +349,8 @@ export function SimbaStoreProvider({children}: {children: React.ReactNode}) {
       podcastsList,
       favoriteRadioIds,
       favoriteTvIds,
+      favoriteStations,
+      pinnedStationIds,
       eqPreset,
       eqGains,
       downloads,
@@ -286,6 +368,8 @@ export function SimbaStoreProvider({children}: {children: React.ReactNode}) {
       podcastsList,
       favoriteRadioIds,
       favoriteTvIds,
+      favoriteStations,
+      pinnedStationIds,
       eqPreset,
       eqGains,
       downloads,
@@ -296,15 +380,18 @@ export function SimbaStoreProvider({children}: {children: React.ReactNode}) {
   );
 
   const applySnapshot = useCallback((snap: PersistedProfileSnapshot) => {
+    hydrateRegistryFromSnapshot(snap);
     setSelectedTopics(snap.selectedTopics);
-    setHistory(snap.history);
+    setHistory(snap.history.filter(h => !isCorruptedPlaceholderItem(h)));
     setRecentSearches(snap.recentSearches);
-    setBookmarks(snap.bookmarks);
+    setBookmarks(snap.bookmarks.filter(b => !isDisallowedBookmark(b)));
     setPlaylistsList(snap.playlistsList);
     setPinnedMixIds(snap.pinnedMixIds);
     setPodcastsList(snap.podcastsList);
     setFavoriteRadioIds(snap.favoriteRadioIds);
     setFavoriteTvIds(snap.favoriteTvIds);
+    setFavoriteStations(snap.favoriteStations ?? []);
+    setPinnedStationIds(snap.pinnedStationIds ?? []);
     setEqPreset(snap.eqPreset);
     setEqGains(snap.eqGains);
     setDownloads(snap.downloads);
@@ -319,17 +406,15 @@ export function SimbaStoreProvider({children}: {children: React.ReactNode}) {
     setPreferences(snap.preferences);
   }, []);
 
-  // Auto-persist active profile on changes (debounced 250ms)
+  // Auto-persist active profile synchronously on changes so bookmarks,
+  // playback history, playlists, and subscriptions are never lost on quick reload.
   const isFirstRenderRef = useRef(true);
   useEffect(() => {
     if (isFirstRenderRef.current) {
       isFirstRenderRef.current = false;
       return;
     }
-    const timer = setTimeout(() => {
-      saveProfileSnapshot(activeProfileId, buildCurrentSnapshot());
-    }, 250);
-    return () => clearTimeout(timer);
+    saveProfileSnapshot(activeProfileId, buildCurrentSnapshot());
   }, [activeProfileId, buildCurrentSnapshot]);
 
   const switchProfile = useCallback(
@@ -365,9 +450,6 @@ export function SimbaStoreProvider({children}: {children: React.ReactNode}) {
         ? `google_${googleId.replace(/[^a-zA-Z0-9_-]/g, '_')}`
         : makeUserProfileId(cleanEmail || cleanName);
 
-      // Flush current profile before switching
-      saveProfileSnapshot(activeProfileId, buildCurrentSnapshot());
-
       const nextMeta: UserProfileMeta = {
         id: profileId,
         name: cleanName,
@@ -380,6 +462,19 @@ export function SimbaStoreProvider({children}: {children: React.ReactNode}) {
         ? savedProfiles.map(p => (p.id === profileId ? nextMeta : p))
         : [...savedProfiles, nextMeta];
 
+      // Already on this profile (e.g. silent sign-in restore on boot):
+      // ONLY refresh profile metadata — never overwrite or reload the active snapshot.
+      if (profileId === activeProfileId) {
+        setSavedProfiles(nextProfiles);
+        saveProfileRegistry({
+          activeProfileId: profileId,
+          profiles: nextProfiles,
+        });
+        return;
+      }
+
+      // Flush current profile before switching to a different profile
+      saveProfileSnapshot(activeProfileId, buildCurrentSnapshot());
       const nextSnap = loadProfileSnapshot(profileId, eqPresets.Flat);
       applySnapshot(nextSnap);
       setSavedProfiles(nextProfiles);
@@ -444,11 +539,17 @@ export function SimbaStoreProvider({children}: {children: React.ReactNode}) {
   }, []);
 
   const playItem = useCallback((item: CatalogueItem) => {
+    registerLiveItem(item);
     setNowPlaying(item);
     setPositionSeconds(item.elapsedSeconds ?? 0);
     setIsPlaying(true);
     setDockVisible(true);
-    setHistory(prev => [item, ...prev.filter(x => x.id !== item.id)]);
+    if (!isCorruptedPlaceholderItem(item)) {
+      setHistory(prev => [
+        item,
+        ...prev.filter(x => x.id !== item.id && !isCorruptedPlaceholderItem(x)),
+      ]);
+    }
   }, []);
 
   const togglePlay = useCallback(() => {
@@ -571,6 +672,12 @@ export function SimbaStoreProvider({children}: {children: React.ReactNode}) {
   }, []);
 
   const toggleBookmarkItem = useCallback((item: CatalogueItem, note?: string) => {
+    // Domain rule: only finite/timestamped media (movies, music, audiobooks,
+    // archive items, podcast episodes) can be bookmarked — not Live TV, Radio, or podcast shows.
+    if (!canBookmarkItem(item)) {
+      return;
+    }
+    registerLiveItem(item);
     setBookmarks(prev => {
       const existing = prev.find(b => b.itemId === item.id);
       if (existing) {
@@ -586,8 +693,33 @@ export function SimbaStoreProvider({children}: {children: React.ReactNode}) {
         durationLabel: '48:10',
         sourceLabel: item.provider.toUpperCase().slice(0, 8),
         icon: 'bookmark-outline',
+        item,
       };
       return [next, ...prev];
+    });
+  }, []);
+
+  const updateBookmarkSnapshot = useCallback((item: CatalogueItem) => {
+    registerLiveItem(item);
+    setBookmarks(prev => {
+      let changed = false;
+      const next = prev.map(b => {
+        if (b.itemId !== item.id) {
+          return b;
+        }
+        if (b.item?.artworkUrl === item.artworkUrl && b.item?.synopsis === item.synopsis) {
+          return b;
+        }
+        changed = true;
+        return {
+          ...b,
+          item: {
+            ...(b.item ?? item),
+            ...item,
+          },
+        };
+      });
+      return changed ? next : prev;
     });
   }, []);
 
@@ -618,6 +750,11 @@ export function SimbaStoreProvider({children}: {children: React.ReactNode}) {
       const lane: 'audio' | 'video' = kindLabel === 'VIDEO' ? 'video' : 'audio';
       const initialIds =
         initialItem && initialItem.lane === lane ? [initialItem.id] : [];
+      const initialItems =
+        initialItem && initialItem.lane === lane ? [initialItem] : [];
+      if (initialItem) {
+        registerLiveItem(initialItem);
+      }
       setPlaylistsList(prev => [
         {
           id: 'pl-' + Date.now(),
@@ -625,7 +762,8 @@ export function SimbaStoreProvider({children}: {children: React.ReactNode}) {
           count: initialIds.length,
           lane,
           itemIds: initialIds,
-          pinned: true,
+          items: initialItems,
+          pinned: false,
           kindLabel,
           icon: lane === 'video' ? 'movie-roll' : 'playlist-music',
         },
@@ -661,12 +799,14 @@ export function SimbaStoreProvider({children}: {children: React.ReactNode}) {
           message: `Already in "${target.name}".`,
         };
       }
+      registerLiveItem(item);
       setPlaylistsList(prev =>
         prev.map(p =>
           p.id === playlistId
             ? {
                 ...p,
                 itemIds: [...p.itemIds, item.id],
+                items: [...(p.items ?? []), item],
                 count: p.itemIds.length + 1,
               }
             : p,
@@ -684,24 +824,40 @@ export function SimbaStoreProvider({children}: {children: React.ReactNode}) {
   }, []);
 
   const toggleFollowPodcast = useCallback(
-    (titleOrId: string, artworkUrl?: string) => {
+    (titleOrItem: string | CatalogueItem, artworkUrl?: string) => {
+      const isObj = typeof titleOrItem !== 'string';
+      const matchId = isObj ? titleOrItem.id : titleOrItem;
+      const matchTitle = isObj ? titleOrItem.title : titleOrItem;
+      if (isObj) {
+        registerLiveItem(titleOrItem);
+      }
       setPodcastsList(prev => {
         const exists = prev.some(
-          p => p.id === titleOrId || p.title === titleOrId,
+          p =>
+            p.id === matchId ||
+            p.itemId === matchId ||
+            p.title === matchTitle,
         );
         if (exists) {
-          return prev.filter(p => p.id !== titleOrId && p.title !== titleOrId);
+          return prev.filter(
+            p =>
+              p.id !== matchId &&
+              p.itemId !== matchId &&
+              p.title !== matchTitle,
+          );
         }
         return [
           {
-            id: 'fp-' + Date.now(),
-            title: titleOrId,
-            author: 'Podcast',
+            id: isObj ? `fp-${titleOrItem.id}` : 'fp-' + Date.now(),
+            itemId: isObj ? titleOrItem.id : undefined,
+            title: matchTitle,
+            author: isObj ? titleOrItem.subtitle || 'Podcast' : 'Podcast',
             episodes: 0,
-            category: 'Podcast',
-            pinned: true,
+            category: isObj ? titleOrItem.genre || 'Podcast' : 'Podcast',
+            pinned: false,
             icon: 'podcast',
-            artworkUrl,
+            artworkUrl: isObj ? titleOrItem.artworkUrl ?? artworkUrl : artworkUrl,
+            item: isObj ? titleOrItem : undefined,
           },
           ...prev,
         ];
@@ -710,21 +866,96 @@ export function SimbaStoreProvider({children}: {children: React.ReactNode}) {
     [],
   );
 
+  const updateSubscriptionSnapshot = useCallback((item: CatalogueItem) => {
+    registerLiveItem(item);
+    setPodcastsList(prev => {
+      let changed = false;
+      const next = prev.map(p => {
+        const matches =
+          p.id === item.id ||
+          p.itemId === item.id ||
+          p.title === item.title;
+        if (!matches) {
+          return p;
+        }
+        if (
+          p.artworkUrl === item.artworkUrl &&
+          p.item?.externalId === item.externalId &&
+          p.item?.synopsis === item.synopsis
+        ) {
+          return p;
+        }
+        changed = true;
+        return {
+          ...p,
+          itemId: item.id,
+          author: item.subtitle || p.author,
+          artworkUrl: item.artworkUrl ?? p.artworkUrl,
+          item: {
+            ...(p.item ?? item),
+            ...item,
+          },
+        };
+      });
+      return changed ? next : prev;
+    });
+  }, []);
+
   const togglePinPodcast = useCallback((id: string) => {
     setPodcastsList(prev =>
       prev.map(p => (p.id === id ? {...p, pinned: !p.pinned} : p)),
     );
   }, []);
 
-  const toggleFavoriteRadio = useCallback((id: string) => {
-    setFavoriteRadioIds(prev =>
-      prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id],
-    );
-  }, []);
+  const toggleFavoriteRadio = useCallback(
+    (idOrItem: string | CatalogueItem) => {
+      const id = typeof idOrItem === 'string' ? idOrItem : idOrItem.id;
+      const isObj = typeof idOrItem !== 'string';
+      if (isObj) {
+        registerLiveItem(idOrItem);
+      }
+      setFavoriteRadioIds(prev => {
+        const exists = prev.includes(id);
+        if (exists) {
+          setFavoriteStations(s => s.filter(x => x.id !== id));
+          setPinnedStationIds(p => p.filter(x => x !== id));
+          return prev.filter(x => x !== id);
+        }
+        if (isObj) {
+          setFavoriteStations(s => [idOrItem, ...s.filter(x => x.id !== id)]);
+        }
+        return [...prev, id];
+      });
+    },
+    [],
+  );
 
-  const toggleFavoriteTv = useCallback((id: string) => {
-    setFavoriteTvIds(prev =>
-      prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id],
+  const toggleFavoriteTv = useCallback(
+    (idOrItem: string | CatalogueItem) => {
+      const id = typeof idOrItem === 'string' ? idOrItem : idOrItem.id;
+      const isObj = typeof idOrItem !== 'string';
+      if (isObj) {
+        registerLiveItem(idOrItem);
+      }
+      setFavoriteTvIds(prev => {
+        const exists = prev.includes(id);
+        if (exists) {
+          setFavoriteStations(s => s.filter(x => x.id !== id));
+          setPinnedStationIds(p => p.filter(x => x !== id));
+          return prev.filter(x => x !== id);
+        }
+        if (isObj) {
+          setFavoriteStations(s => [idOrItem, ...s.filter(x => x.id !== id)]);
+        }
+        return [...prev, id];
+      });
+    },
+    [],
+  );
+
+  const togglePinStation = useCallback((id: string) => {
+    setPinnedStationIds(prev =>
+      prev.includes(id) ? prev.filter(x => x !== id) : [id, ...prev],
     );
   }, []);
 
@@ -815,6 +1046,7 @@ export function SimbaStoreProvider({children}: {children: React.ReactNode}) {
       clearRecentSearches,
       bookmarks,
       toggleBookmarkItem,
+      updateBookmarkSnapshot,
       removeBookmark,
       clearBookmarks,
       playlistsList,
@@ -826,11 +1058,15 @@ export function SimbaStoreProvider({children}: {children: React.ReactNode}) {
       togglePinMix,
       podcastsList,
       toggleFollowPodcast,
+      updateSubscriptionSnapshot,
       togglePinPodcast,
       favoriteRadioIds,
       toggleFavoriteRadio,
       favoriteTvIds,
       toggleFavoriteTv,
+      favoriteStations,
+      pinnedStationIds,
+      togglePinStation,
       eqPreset,
       eqGains,
       selectEqPreset,
@@ -884,6 +1120,7 @@ export function SimbaStoreProvider({children}: {children: React.ReactNode}) {
       clearRecentSearches,
       bookmarks,
       toggleBookmarkItem,
+      updateBookmarkSnapshot,
       removeBookmark,
       clearBookmarks,
       playlistsList,
@@ -895,11 +1132,15 @@ export function SimbaStoreProvider({children}: {children: React.ReactNode}) {
       togglePinMix,
       podcastsList,
       toggleFollowPodcast,
+      updateSubscriptionSnapshot,
       togglePinPodcast,
       favoriteRadioIds,
       toggleFavoriteRadio,
       favoriteTvIds,
       toggleFavoriteTv,
+      favoriteStations,
+      pinnedStationIds,
+      togglePinStation,
       eqPreset,
       eqGains,
       selectEqPreset,

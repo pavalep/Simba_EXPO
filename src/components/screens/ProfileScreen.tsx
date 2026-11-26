@@ -48,8 +48,9 @@ export function ProfileScreen() {
     history,
     playlistsList,
     podcastsList,
+    favoriteRadioIds,
+    favoriteTvIds,
     linkedFolders,
-    downloads,
   } = useSimbaStore();
 
   const [cacheCleared, setCacheCleared] = useState(false);
@@ -332,6 +333,24 @@ export function ProfileScreen() {
               showDivider
             />
             <LibraryHubTile
+              icon="radio-tower"
+              iconTone="gold"
+              title="Favorite Stations"
+              subtitle={`${favoriteRadioIds.length} radio stations saved`}
+              badgeCount={favoriteRadioIds.length}
+              onPress={() => router.push('/library?tab=stations')}
+              showDivider
+            />
+            <LibraryHubTile
+              icon="access-point"
+              iconTone="gold"
+              title="Favorite Channels"
+              subtitle={`${favoriteTvIds.length} live TV channels saved`}
+              badgeCount={favoriteTvIds.length}
+              onPress={() => router.push('/library?tab=channels')}
+              showDivider
+            />
+            <LibraryHubTile
               icon="heart-outline"
               iconTone="love"
               title="Saved Bookmarks"
@@ -361,8 +380,8 @@ export function ProfileScreen() {
             <LibraryHubTile
               icon="playlist-music"
               iconTone="gold"
-              title="Playlists & Downloads"
-              subtitle={`${playlistsList.length} playlists • ${downloads.length} downloads`}
+              title="Playlists"
+              subtitle={`${playlistsList.length} playlists created`}
               badgeCount={playlistsList.length}
               onPress={() => router.push('/library?tab=playlists')}
               showDivider

@@ -8,6 +8,7 @@ import {
   AppText,
   Badge,
   IconButton,
+  MediaArtwork,
   Screen,
   Surface,
 } from '../ui';
@@ -159,12 +160,16 @@ export function PlaybackQueueScreen() {
                 {
                   backgroundColor: colors.brand.primaryDark,
                   borderRadius: radius.md,
+                  overflow: 'hidden',
                 },
               ]}>
-              <SimbaIcon
-                name={nowPlaying.icon}
-                size={26}
-                color={colors.accent.gold}
+              <MediaArtwork
+                uri={nowPlaying.artworkUrl}
+                icon={nowPlaying.icon}
+                iconSize={26}
+                iconColor={colors.accent.gold}
+                borderRadius={radius.md}
+                style={StyleSheet.absoluteFill}
               />
             </View>
             <View style={styles.rowCopy}>

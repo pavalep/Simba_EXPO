@@ -183,27 +183,22 @@ function describe(value: unknown): string {
   return `${typeof value} ${JSON.stringify(value)}`;
 }
 
-/** V21 W6 P21 (T21.02): validate a single RawFeed object's shape. */
+/** V21 W6 P21 (T21.02): validate a single RawFeed object's shape (tolerant of nullable optional metadata). */
 function parseRawFeed(raw: unknown, path: string): RawFeed {
   const rec = assertShape(raw, path, 'podcastIndex', isRecord);
+  const rawImage =
+    isString(rec.image) && rec.image.length > 0
+      ? rec.image
+      : isString(rec.artwork) && rec.artwork.length > 0
+        ? rec.artwork
+        : '';
   return {
     id: assertShape(rec.id, `${path}.id`, 'podcastIndex', isFiniteNumber),
-    title: assertShape(rec.title, `${path}.title`, 'podcastIndex', isString),
-    author: assertShape(rec.author, `${path}.author`, 'podcastIndex', isString),
-    description: assertShape(
-      rec.description,
-      `${path}.description`,
-      'podcastIndex',
-      isString,
-    ),
-    image: assertShape(rec.image, `${path}.image`, 'podcastIndex', isString),
-    url: assertShape(rec.url, `${path}.url`, 'podcastIndex', isString),
-    // V23 W24 D-040c: see RawFeed.episodeCount note. Podcast Index
-    // stopped returning `episodeCount` on feed summary endpoints,
-    // so the field is genuinely optional today. Default to 0 so
-    // domain shape stays stable (PodcastResult.episodeCount:
-    // number); the UI renders "Unknown" for 0 (style already
-    // exists).
+    title: isString(rec.title) && rec.title.length > 0 ? rec.title : 'Untitled Podcast',
+    author: isString(rec.author) ? rec.author : '',
+    description: isString(rec.description) ? rec.description : '',
+    image: rawImage,
+    url: isString(rec.url) ? rec.url : '',
     episodeCount:
       typeof rec.episodeCount === 'number' && Number.isFinite(rec.episodeCount)
         ? rec.episodeCount

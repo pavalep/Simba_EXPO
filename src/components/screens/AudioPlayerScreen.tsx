@@ -705,14 +705,6 @@ export function AudioPlayerScreen(props: AudioPlayerScreenProps) {
               setMoreOpen(false);
             }}
           />
-          <SheetRow
-            icon="download-outline"
-            label="Offline Downloads"
-            onPress={() => {
-              setMoreOpen(false);
-              router.push('/library?tab=downloads');
-            }}
-          />
         </View>
       </Sheet>
 

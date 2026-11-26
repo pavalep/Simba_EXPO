@@ -6,12 +6,15 @@ import {useTheme} from '../../theme/ThemeProvider';
 import {useSimbaStore} from '../../state/useSimbaStore';
 import {
   getLiveItemById,
+  reconstructItemFromBookmark,
+  registerLiveItem,
   useSimbaPlayback,
 } from '../../infrastructure/player';
 import {
   AppText,
   Badge,
   IconButton,
+  MediaArtwork,
   Screen,
   Surface,
   UnderlineTabs,
@@ -38,7 +41,8 @@ export function SavedScreen({initialTab = 'bookmarks'}: SavedScreenProps) {
   } = useSimbaStore();
   const {playCatalogueItem} = useSimbaPlayback();
 
-  const [tab, setTab] = useState<'bookmarks' | 'history'>(initialTab);
+  const tab = initialTab;
+  const isBookmarks = tab === 'bookmarks';
 
   const stickyHeader = (
     <View
@@ -56,14 +60,18 @@ export function SavedScreen({initialTab = 'bookmarks'}: SavedScreenProps) {
         accessibilityLabel="Back"
       />
       <View style={styles.titleCol}>
-        <AppText variant="h2">Keepsakes</AppText>
+        <AppText variant="h2">
+          {isBookmarks ? 'Saved Bookmarks' : 'Playback History'}
+        </AppText>
         <AppText variant="caption" tone="secondary">
-          Saved moments &amp; recent listens
+          {isBookmarks
+            ? `${bookmarks.length} ${bookmarks.length === 1 ? 'item' : 'items'} saved`
+            : `${history.length} recently played`}
         </AppText>
       </View>
       <Pressable
         onPress={() =>
-          tab === 'bookmarks' ? clearBookmarks() : clearHistory()
+          isBookmarks ? clearBookmarks() : clearHistory()
         }
         accessibilityRole="button">
         <AppText variant="labelSmall" tone="gold">
@@ -80,19 +88,6 @@ export function SavedScreen({initialTab = 'bookmarks'}: SavedScreenProps) {
           styles.container,
           {padding: spacing.lg, paddingBottom: spacing.lg},
         ]}>
-
-        {/* Editorial Underline Tabs: Saved Bookmarks vs Playback History */}
-        <View style={{marginHorizontal: -spacing.lg}}>
-          <UnderlineTabs
-            paddingHorizontal={spacing.lg}
-            activeKey={tab}
-            onChange={next => setTab(next as 'bookmarks' | 'history')}
-            options={[
-              {key: 'bookmarks', label: `Saved Bookmarks (${bookmarks.length})`},
-              {key: 'history', label: `Playback History (${history.length})`},
-            ]}
-          />
-        </View>
 
         {/* TAB 1: Saved Bookmarks */}
         {tab === 'bookmarks' ? (
@@ -141,14 +136,11 @@ export function SavedScreen({initialTab = 'bookmarks'}: SavedScreenProps) {
                   ]}>
                   <Pressable
                     onPress={() => {
-                      const target = getLiveItemById(bm.itemId);
-                      if (!target) {
-                        router.push({
-                          pathname: '/media/[id]',
-                          params: {id: bm.itemId},
-                        });
-                        return;
-                      }
+                      const target =
+                        getLiveItemById(bm.itemId) ??
+                        history.find(h => h.id === bm.itemId) ??
+                        reconstructItemFromBookmark(bm);
+                      registerLiveItem(target);
                       void playCatalogueItem(target);
                       router.push(
                         target.lane === 'video'
@@ -164,12 +156,20 @@ export function SavedScreen({initialTab = 'bookmarks'}: SavedScreenProps) {
                         {
                           backgroundColor: colors.brand.primaryContainer,
                           borderRadius: radius.md,
+                          overflow: 'hidden',
                         },
                       ]}>
-                      <SimbaIcon
-                        name="bookmark-check"
-                        size={20}
-                        color={colors.brand.onPrimaryContainer}
+                      <MediaArtwork
+                        uri={
+                          bm.item?.artworkUrl ??
+                          getLiveItemById(bm.itemId)?.artworkUrl ??
+                          history.find(h => h.id === bm.itemId)?.artworkUrl
+                        }
+                        icon="bookmark-check"
+                        iconSize={20}
+                        iconColor={colors.brand.onPrimaryContainer}
+                        borderRadius={radius.md}
+                        style={StyleSheet.absoluteFill}
                       />
                     </View>
                     <View style={styles.rowCopy}>
@@ -260,12 +260,16 @@ export function SavedScreen({initialTab = 'bookmarks'}: SavedScreenProps) {
                         {
                           backgroundColor: colors.accent.goldWash,
                           borderRadius: radius.md,
+                          overflow: 'hidden',
                         },
                       ]}>
-                      <SimbaIcon
-                        name={item.icon}
-                        size={22}
-                        color={colors.accent.gold}
+                      <MediaArtwork
+                        uri={item.artworkUrl}
+                        icon={item.icon}
+                        iconSize={22}
+                        iconColor={colors.accent.gold}
+                        borderRadius={radius.md}
+                        style={StyleSheet.absoluteFill}
                       />
                     </View>
                     <View style={styles.rowCopy}>
