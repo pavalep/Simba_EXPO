@@ -23,11 +23,11 @@ export function MiniPlayerDock() {
   const router = useRouter();
   const {
     nowPlaying,
-    isPlaying: dummyIsPlaying,
-    positionSeconds: dummyPositionSeconds,
+    isPlaying: storeIsPlaying,
+    positionSeconds: storePositionSeconds,
     isPipActive,
     dockVisible,
-    togglePlay: dummyTogglePlay,
+    togglePlay: storeTogglePlay,
     setIsPipActive,
   } = useSimbaStore();
   const {state: mpvState, commands} = usePlayer();
@@ -42,16 +42,16 @@ export function MiniPlayerDock() {
         mpvState.isLoading),
   );
 
-  const isPlaying = hasLiveMpvMedia ? mpvState.isPlaying : dummyIsPlaying;
+  const isPlaying = hasLiveMpvMedia ? mpvState.isPlaying : storeIsPlaying;
   const durationMs =
     mpvProgress.durationMs > 0
       ? mpvProgress.durationMs
-      : (nowPlaying?.durationSeconds ?? 2890) * 1000;
+      : (nowPlaying?.durationSeconds ?? 0) * 1000;
 
   const {displayPositionMs} = useSmoothPlaybackPosition({
     positionMs: hasLiveMpvMedia
       ? mpvProgress.positionMs
-      : dummyPositionSeconds * 1000,
+      : storePositionSeconds * 1000,
     durationMs,
     isPlaying: Boolean(dockVisible && nowPlaying && isPlaying),
     isBuffering: mpvState.isBuffering,
@@ -72,7 +72,7 @@ export function MiniPlayerDock() {
     if (hasLiveMpvMedia) {
       commands.togglePlayPause();
     } else {
-      dummyTogglePlay();
+      storeTogglePlay();
     }
   };
 

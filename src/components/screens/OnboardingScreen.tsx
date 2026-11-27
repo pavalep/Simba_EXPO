@@ -4,7 +4,7 @@ import {SimbaIcon} from '../ui/SimbaIcon';
 import {useRouter} from 'expo-router';
 import {useTheme} from '../../theme/ThemeProvider';
 import {AppText, Button, Chip, SimbaLogo} from '../ui';
-import {catalogueLanes} from '../../data/dummy';
+import {catalogueLanes} from '../../constants/catalogueConfig';
 
 /**
  * ONBOARDING - taste calibration.

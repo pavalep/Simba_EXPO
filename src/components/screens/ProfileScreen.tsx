@@ -48,8 +48,7 @@ export function ProfileScreen() {
     history,
     playlistsList,
     podcastsList,
-    favoriteRadioIds,
-    favoriteTvIds,
+    favorites,
     linkedFolders,
   } = useSimbaStore();
 
@@ -324,39 +323,39 @@ export function ProfileScreen() {
 
           <View style={styles.groupCard}>
             <LibraryHubTile
+              icon="heart-outline"
+              iconTone="love"
+              title="Favorites"
+              subtitle={`${favorites.length} ${favorites.length === 1 ? 'item' : 'items'} saved`}
+              badgeCount={favorites.length}
+              onPress={() => router.push('/library?tab=favorites')}
+              showDivider
+            />
+            <LibraryHubTile
               icon="rss"
               iconTone="gold"
               title="Subscribed Podcasts"
-              subtitle={`${podcastsList.length} shows followed`}
+              subtitle={`${podcastsList.length} ${podcastsList.length === 1 ? 'show' : 'shows'} followed`}
               badgeCount={podcastsList.length}
               onPress={() => router.push('/library?tab=podcasts')}
               showDivider
             />
             <LibraryHubTile
-              icon="radio-tower"
+              icon="bookmark-outline"
               iconTone="gold"
-              title="Favorite Stations"
-              subtitle={`${favoriteRadioIds.length} radio stations saved`}
-              badgeCount={favoriteRadioIds.length}
-              onPress={() => router.push('/library?tab=stations')}
-              showDivider
-            />
-            <LibraryHubTile
-              icon="access-point"
-              iconTone="gold"
-              title="Favorite Channels"
-              subtitle={`${favoriteTvIds.length} live TV channels saved`}
-              badgeCount={favoriteTvIds.length}
-              onPress={() => router.push('/library?tab=channels')}
-              showDivider
-            />
-            <LibraryHubTile
-              icon="heart-outline"
-              iconTone="love"
-              title="Saved Bookmarks"
-              subtitle={`${bookmarks.length} items saved`}
+              title="Bookmarks"
+              subtitle={`${bookmarks.length} ${bookmarks.length === 1 ? 'moment' : 'moments'} saved`}
               badgeCount={bookmarks.length}
               onPress={() => router.push('/saved?tab=bookmarks')}
+              showDivider
+            />
+            <LibraryHubTile
+              icon="playlist-music"
+              iconTone="gold"
+              title="Playlists"
+              subtitle={`${playlistsList.length} ${playlistsList.length === 1 ? 'playlist' : 'playlists'} created`}
+              badgeCount={playlistsList.length}
+              onPress={() => router.push('/library?tab=playlists')}
               showDivider
             />
             <LibraryHubTile
@@ -378,19 +377,10 @@ export function ProfileScreen() {
               showDivider
             />
             <LibraryHubTile
-              icon="playlist-music"
-              iconTone="gold"
-              title="Playlists"
-              subtitle={`${playlistsList.length} playlists created`}
-              badgeCount={playlistsList.length}
-              onPress={() => router.push('/library?tab=playlists')}
-              showDivider
-            />
-            <LibraryHubTile
               icon="folder-music-outline"
               iconTone="gold"
               title="Folders"
-              subtitle={`${linkedFolders.length} folders added`}
+              subtitle={`${linkedFolders.length} ${linkedFolders.length === 1 ? 'folder' : 'folders'} added`}
               badgeCount={linkedFolders.length}
               onPress={() => router.push('/folders')}
               showDivider={false}

@@ -20,7 +20,11 @@ import {
   mapIPTVChannelToItem,
 } from '../../infrastructure/api/mappers';
 import {
+  canBookmarkItem,
+  canFavoriteItem,
   clearPendingVideoLoad,
+  consumePendingSeekTarget,
+  formatTimestampLabel,
   getPendingVideoLoad,
   PIP_CHROME_NATIVE_ID,
   SimbaVideo,
@@ -159,6 +163,10 @@ export function VideoPlayerScreen(props: VideoPlayerScreenProps) {
     setIsPipActive,
     activeLiveChannelId,
     setActiveLiveChannelId,
+    isFavorite,
+    toggleFavorite,
+    addBookmark,
+    updateHistoryProgress,
   } = useSimbaStore();
   const {state: mpvState, commands} = usePlayer();
   const mpvProgress = usePlayerProgress();
@@ -613,6 +621,82 @@ export function VideoPlayerScreen(props: VideoPlayerScreenProps) {
     }
   };
 
+  // Apply initial seek when opened from a frozen Bookmark or Jump Back In resume
+  useEffect(() => {
+    if (!nowPlaying || isLiveMode) {
+      return;
+    }
+    if (mpvProgress.durationMs <= 0 && !mpvState.isPlaying) {
+      return;
+    }
+    const targetSec = consumePendingSeekTarget(nowPlaying.id);
+    if (targetSec != null && targetSec > 0) {
+      handleSeekSeconds(targetSec);
+    }
+  }, [
+    nowPlaying,
+    isLiveMode,
+    mpvProgress.durationMs,
+    mpvState.isPlaying,
+    handleSeekSeconds,
+  ]);
+
+  // Continuously sync live playback position into Jump Back In / Playback History
+  const lastSavedVideoPosRef = useRef<number>(-1);
+  const latestVideoPosRef = useRef({
+    id: nowPlaying?.id,
+    pos: positionSeconds,
+    dur: duration,
+    live: isLiveMode,
+  });
+  latestVideoPosRef.current = {
+    id: nowPlaying?.id,
+    pos: positionSeconds,
+    dur: duration,
+    live: isLiveMode,
+  };
+
+  useEffect(() => {
+    if (!nowPlaying || isLiveMode || positionSeconds <= 0) {
+      return;
+    }
+    if (
+      !isPlaying ||
+      Math.abs(positionSeconds - lastSavedVideoPosRef.current) >= 5
+    ) {
+      lastSavedVideoPosRef.current = positionSeconds;
+      updateHistoryProgress(
+        nowPlaying.id,
+        positionSeconds,
+        duration > 0 ? duration : undefined,
+      );
+    }
+  }, [
+    nowPlaying,
+    isLiveMode,
+    isPlaying,
+    positionSeconds,
+    duration,
+    updateHistoryProgress,
+  ]);
+
+  useEffect(() => {
+    return () => {
+      const snap = latestVideoPosRef.current;
+      if (snap.id && !snap.live && snap.pos > 0) {
+        updateHistoryProgress(
+          snap.id,
+          snap.pos,
+          snap.dur > 0 ? snap.dur : undefined,
+        );
+      }
+    };
+  }, [updateHistoryProgress]);
+
+  const favorited = nowPlaying ? isFavorite(nowPlaying.id) : false;
+  const allowFavorite = canFavoriteItem(nowPlaying);
+  const allowBookmark = canBookmarkItem(nowPlaying);
+
   return (
     <View
       style={[
@@ -731,6 +815,42 @@ export function VideoPlayerScreen(props: VideoPlayerScreenProps) {
                   ) : null}
                 </View>
 
+                {allowFavorite && nowPlaying ? (
+                  <IconButton
+                    name={favorited ? 'heart' : 'heart-outline'}
+                    onPress={() => {
+                      toggleFavorite(nowPlaying);
+                      showHud(
+                        favorited
+                          ? 'Removed from Favorites'
+                          : 'Added to Favorites',
+                      );
+                    }}
+                    accessibilityLabel={
+                      favorited ? 'Remove from Favorites' : 'Add to Favorites'
+                    }
+                    onMedia
+                  />
+                ) : null}
+                {allowBookmark && nowPlaying ? (
+                  <IconButton
+                    name="bookmark-outline"
+                    onPress={() => {
+                      const created = addBookmark(
+                        nowPlaying,
+                        positionSeconds,
+                        duration > 0 ? duration : undefined,
+                      );
+                      if (created) {
+                        showHud(
+                          `Bookmarked at ${formatTimestampLabel(positionSeconds)}`,
+                        );
+                      }
+                    }}
+                    accessibilityLabel="Bookmark this timestamp"
+                    onMedia
+                  />
+                ) : null}
                 <IconButton
                   name="dots-vertical"
                   onPress={() => setMoreOpen(true)}

@@ -32,10 +32,12 @@ import {
   curatedSuggestionPool,
   relatedSearchChips,
   searchScopes,
-  type CatalogueItem,
-  type LocalFileRecord,
-  type SearchScope,
-} from '../../data/dummy';
+} from '../../constants/catalogueConfig';
+import type {
+  CatalogueItem,
+  LocalFileRecord,
+  SearchScope,
+} from '../../types/catalogue';
 import {MEDIA_KIND_LABELS} from '../../types/media';
 
 type SearchUiState = 'zero' | 'typing' | 'results';
@@ -79,12 +81,8 @@ export function SearchScreen(props: SearchScreenProps = {}) {
     commitSearchQuery,
     deleteRecentSearch,
     clearRecentSearches,
-    bookmarks,
-    toggleBookmarkItem,
-    favoriteRadioIds,
-    toggleFavoriteRadio,
-    favoriteTvIds,
-    toggleFavoriteTv,
+    isFavorite,
+    toggleFavorite,
     podcastsList,
     toggleFollowPodcast,
   } = useSimbaStore();
@@ -584,15 +582,9 @@ export function SearchScreen(props: SearchScreenProps = {}) {
             <View style={styles.resultsList}>
               {results.map((item, idx) => {
                 const isPodShow = isPodcastShow(item);
-                const isLiveTv = item.kind === 'live-tv';
-                const isRadio = item.kind === 'radio';
                 const isSaved = isPodShow
                   ? podcastsList.some(p => p.title === item.title)
-                  : isLiveTv
-                    ? favoriteTvIds.includes(item.id)
-                    : isRadio
-                      ? favoriteRadioIds.includes(item.id)
-                      : bookmarks.some(b => b.itemId === item.id);
+                  : isFavorite(item.id);
                 return (
                   <Pressable
                     key={item.id}
@@ -664,11 +656,7 @@ export function SearchScreen(props: SearchScreenProps = {}) {
                         onPress={() =>
                           isPodShow
                             ? toggleFollowPodcast(item)
-                            : isLiveTv
-                              ? toggleFavoriteTv(item)
-                              : isRadio
-                                ? toggleFavoriteRadio(item)
-                                : toggleBookmarkItem(item)
+                            : toggleFavorite(item)
                         }
                         accessibilityRole="button"
                         accessibilityLabel={
@@ -677,8 +665,8 @@ export function SearchScreen(props: SearchScreenProps = {}) {
                               ? 'Unfollow podcast'
                               : 'Follow podcast'
                             : isSaved
-                              ? 'Remove bookmark'
-                              : 'Save bookmark'
+                              ? 'Remove from Favorites'
+                              : 'Add to Favorites'
                         }
                         style={styles.smallTap}>
                         <SimbaIcon

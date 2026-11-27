@@ -14,7 +14,7 @@ import type {
   RadioStationResult,
   TVMazeShow,
 } from '../../types/api';
-import type {CatalogueItem} from '../../data/dummy';
+import type {CatalogueItem} from '../../types/catalogue';
 import {
   getArchiveTracks,
   getInternetArchiveVideoDetails,

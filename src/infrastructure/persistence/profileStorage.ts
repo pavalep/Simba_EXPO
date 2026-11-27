@@ -2,9 +2,10 @@ import {Directory, File, Paths} from 'expo-file-system';
 import type {
   CatalogueItem,
   DownloadRecord,
+  FavoriteRecord,
   LinkedFolderRecord,
   SavedBookmarkRecord,
-} from '../../data/dummy';
+} from '../../types/catalogue';
 import type {
   FollowedPodcastRecord,
   PlaylistRecord,
@@ -34,6 +35,7 @@ export interface PersistedProfileSnapshot {
   playlistsList: PlaylistRecord[];
   pinnedMixIds: string[];
   podcastsList: FollowedPodcastRecord[];
+  favorites?: FavoriteRecord[];
   favoriteRadioIds: string[];
   favoriteTvIds: string[];
   favoriteStations?: CatalogueItem[];
@@ -68,6 +70,7 @@ export function createEmptyProfileSnapshot(
     playlistsList: [],
     pinnedMixIds: [],
     podcastsList: [],
+    favorites: [],
     favoriteRadioIds: [],
     favoriteTvIds: [],
     favoriteStations: [],

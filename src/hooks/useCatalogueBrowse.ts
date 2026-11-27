@@ -21,7 +21,7 @@ import {
   mapRadioStationToItem,
   mapTVMazeShowToItem,
 } from '../infrastructure/api/mappers';
-import type {CatalogueItem} from '../data/dummy';
+import type {CatalogueItem} from '../types/catalogue';
 
 export interface CatalogueBrowseInput {
   laneId: string;

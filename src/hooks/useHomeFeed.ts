@@ -15,17 +15,25 @@ import {
   mapPodcastToItem,
   mapRadioStationToItem,
 } from '../infrastructure/api/mappers';
-import type {CatalogueItem, CuratedMixRecord} from '../data/dummy';
+import type {CatalogueItem, CuratedMixRecord} from '../types/catalogue';
+import {resolveDeviceWeatherCity} from '../utils/timezoneToCity';
 
 /**
  * Parallel live data hook for Home & Explore.
- * Fetches live Open-Meteo weather + Internet Archive movies + PodcastIndex
- * trending + Jamendo/Audius music + Radio Browser stations via TanStack Query.
+ * Fetches live Open-Meteo weather (using real device timezone/locale city) +
+ * Internet Archive movies + PodcastIndex trending + Jamendo/Audius music +
+ * Radio Browser stations via TanStack Query.
  */
 export function useHomeFeed() {
+  const weatherCity = useMemo(() => resolveDeviceWeatherCity(), []);
+
   const weatherQuery = useApiQuery({
-    queryKey: ['weather', 'city', 'Bengaluru'],
-    queryFn: ({signal}) => weatherApi.fetchWeatherByCity('Bengaluru', signal),
+    queryKey: ['weather', 'city', weatherCity ?? 'unknown'],
+    enabled: Boolean(weatherCity),
+    queryFn: ({signal}) =>
+      weatherCity
+        ? weatherApi.fetchWeatherByCity(weatherCity, signal)
+        : Promise.resolve(null),
     staleTime: 15 * 60_000,
     retry: 1,
   });

@@ -7,7 +7,7 @@ import {useSimbaStore} from '../../state/useSimbaStore';
 import {useHomeFeed} from '../../hooks/useHomeFeed';
 import {
   getLiveItemById,
-  reconstructItemFromBookmark,
+  getSmartResumeSeconds,
   reconstructItemFromSubscription,
   registerLiveItem,
   registerLiveItems,
@@ -28,11 +28,8 @@ import {
   SimbaLogo,
   Surface,
 } from '../ui';
-import {
-  quickCategories,
-  type CatalogueItem,
-  type CuratedMixRecord,
-} from '../../data/dummy';
+import {quickCategories} from '../../constants/catalogueConfig';
+import type {CatalogueItem, CuratedMixRecord} from '../../types/catalogue';
 import {MEDIA_KIND_LABELS} from '../../types/media';
 
 function formatDurationShort(seconds?: number): string {
@@ -72,14 +69,14 @@ export function HomeScreen() {
     history,
     pinnedMixIds,
     togglePinMix,
-    bookmarks,
+    favorites,
     playlistsList,
     podcastsList,
-    favoriteRadioIds,
-    favoriteTvIds,
-    favoriteStations,
-    pinnedStationIds,
   } = useSimbaStore();
+  const pinnedFavorites = useMemo(
+    () => favorites.filter(f => f.pinned),
+    [favorites],
+  );
   const pinnedPlaylists = useMemo(
     () => playlistsList.filter(p => p.pinned),
     [playlistsList],
@@ -120,59 +117,6 @@ export function HomeScreen() {
   const musicAndRadioItems = useMemo(
     () => [...homeFeed.music.slice(0, 6), ...homeFeed.radio.slice(0, 6)],
     [homeFeed.music, homeFeed.radio],
-  );
-
-  const resolvedFavoriteStations = useMemo(() => {
-    const byId = new Map<string, CatalogueItem>();
-    for (const st of favoriteStations) {
-      byId.set(st.id, st);
-    }
-    const allIds = [...favoriteRadioIds, ...favoriteTvIds];
-    const result: CatalogueItem[] = [];
-    const seen = new Set<string>();
-    for (const id of allIds) {
-      if (seen.has(id)) {
-        continue;
-      }
-      seen.add(id);
-      const found =
-        byId.get(id) ??
-        homeFeed.radio.find(r => r.id === id) ??
-        getLiveItemById(id) ??
-        history.find(h => h.id === id);
-      if (found) {
-        result.push(found);
-      } else {
-        const isTv = favoriteTvIds.includes(id) || id.startsWith('iptv-');
-        result.push({
-          id,
-          title: isTv ? 'Saved Channel' : 'Saved Station',
-          subtitle: isTv ? 'Live TV' : 'Radio',
-          kind: isTv ? 'live-tv' : 'radio',
-          lane: isTv ? 'video' : 'audio',
-          source: 'api',
-          provider: isTv ? 'IPTV-org' : 'RadioBrowser',
-          icon: isTv ? 'access-point' : 'radio-tower',
-          catalogueLaneId: isTv ? 'livetv' : 'radio',
-        });
-      }
-    }
-    return result;
-  }, [favoriteStations, favoriteRadioIds, favoriteTvIds, homeFeed.radio, history]);
-
-  const resolvedFavoriteRadio = useMemo(
-    () =>
-      resolvedFavoriteStations.filter(
-        st => st.kind !== 'live-tv' && pinnedStationIds.includes(st.id),
-      ),
-    [resolvedFavoriteStations, pinnedStationIds],
-  );
-  const resolvedFavoriteChannels = useMemo(
-    () =>
-      resolvedFavoriteStations.filter(
-        st => st.kind === 'live-tv' && pinnedStationIds.includes(st.id),
-      ),
-    [resolvedFavoriteStations, pinnedStationIds],
   );
 
   const recommendedItems = useMemo(
@@ -217,8 +161,12 @@ export function HomeScreen() {
   const openCatalogue = (laneId: string) =>
     router.push({pathname: '/catalogue/[lane]', params: {lane: laneId}});
 
-  const handlePlayItem = (item: CatalogueItem) => {
-    void playCatalogueItem(item);
+  const handlePlayItem = (item: CatalogueItem, resume = false) => {
+    const startPositionSeconds = resume ? getSmartResumeSeconds(item) : undefined;
+    void playCatalogueItem(
+      item,
+      startPositionSeconds != null ? {startPositionSeconds} : undefined,
+    );
     router.push(item.lane === 'video' ? '/player/video' : '/player/audio');
   };
 
@@ -310,12 +258,12 @@ export function HomeScreen() {
           <HomeFeedShimmer
             hasHistory={history.length > 0}
             hasSubscriptions={pinnedPodcasts.length > 0}
-            hasBookmarks={bookmarks.length > 0}
+            hasBookmarks={pinnedFavorites.length > 0}
             hasPlaylists={pinnedPlaylists.length > 0}
           />
         ) : (
           <>
-        {/* 3. Jump Back In — only shown once the user has real playback history */}
+        {/* 3. Jump Back In — always naturally shown once the user has real playback history */}
         {history.length > 0 ? (
           <>
             <SectionHeader
@@ -325,10 +273,14 @@ export function HomeScreen() {
               onAction={() => router.push('/saved?tab=history')}
             />
             <Rail gap={12} padding={spacing.lg}>
-              {history.slice(0, 8).map(item => (
+              {history.slice(0, 8).map(item => {
+                const isLive = item.kind === 'live-tv' || item.kind === 'radio';
+                const hasProgress =
+                  !isLive && item.progress != null && item.progress > 0;
+                return (
                 <Pressable
                   key={item.id}
-                  onPress={() => handlePlayItem(item)}
+                  onPress={() => handlePlayItem(item, true)}
                   accessibilityRole="button"
                   accessibilityLabel={`Resume ${item.title}`}
                   style={({pressed}) => [
@@ -354,11 +306,17 @@ export function HomeScreen() {
                     />
                     <View style={styles.jumpBadgeTopLeft}>
                       <Badge
-                        label={item.lane === 'video' ? 'VIDEO' : 'AUDIO'}
+                        label={
+                          isLive
+                            ? 'LIVE'
+                            : item.lane === 'video'
+                              ? 'VIDEO'
+                              : 'AUDIO'
+                        }
                         tone="onMedia"
                       />
                     </View>
-                    {item.elapsedTotalLabel ? (
+                    {!isLive && item.elapsedTotalLabel ? (
                       <View style={styles.jumpTimestampBottomLeft}>
                         <Badge label={item.elapsedTotalLabel} tone="onMedia" />
                       </View>
@@ -377,14 +335,16 @@ export function HomeScreen() {
                         color={colors.brand.onPrimary}
                       />
                     </View>
-                    <View style={styles.jumpProgressBar}>
-                      <ProgressBar
-                        progress={item.progress ?? 0.15}
-                        height={3.5}
-                        trackColor={colors.background.onMediaPill}
-                        fillColor={colors.accent.gold}
-                      />
-                    </View>
+                    {hasProgress ? (
+                      <View style={styles.jumpProgressBar}>
+                        <ProgressBar
+                          progress={item.progress ?? 0}
+                          height={3.5}
+                          trackColor={colors.background.onMediaPill}
+                          fillColor={colors.accent.gold}
+                        />
+                      </View>
+                    ) : null}
                   </View>
                   <View style={styles.jumpCopy}>
                     <AppText variant="label" numberOfLines={1}>
@@ -395,7 +355,8 @@ export function HomeScreen() {
                     </AppText>
                   </View>
                 </Pressable>
-              ))}
+                );
+              })}
             </Rail>
           </>
         ) : null}
@@ -450,91 +411,22 @@ export function HomeScreen() {
           </>
         ) : null}
 
-        {/* 5. Saved Bookmarks — only shown when the user has saved real bookmarks */}
-        {bookmarks.length > 0 ? (
+        {/* 5. Pinned Favorites — single clean rail for any favorites pinned from Profile */}
+        {pinnedFavorites.length > 0 ? (
           <>
             <SectionHeader
               icon="heart"
               iconTone="love"
-              title="Saved Bookmarks"
-              action={`All (${bookmarks.length})`}
-              onAction={() => router.push('/saved?tab=bookmarks')}
-            />
-            <Rail gap={10} padding={spacing.lg}>
-              {bookmarks.map(bm => {
-                const resolvedBm =
-                  bm.item ??
-                  getLiveItemById(bm.itemId) ??
-                  history.find(h => h.id === bm.itemId);
-                const bmArtwork = resolvedBm?.artworkUrl;
-                return (
-                <Pressable
-                  key={bm.id}
-                  onPress={() => {
-                    const target =
-                      resolvedBm ?? reconstructItemFromBookmark(bm);
-                    openDetail(target);
-                  }}
-                  accessibilityRole="button"
-                  style={styles.bookmarkWrap}>
-                  <Surface tone="subtle" radius="md" style={styles.bookmarkCard}>
-                    <View
-                      style={[
-                        styles.bookmarkArt,
-                        {
-                          backgroundColor: colors.brand.primaryContainer,
-                          borderRadius: radius.xs + 2,
-                          overflow: 'hidden',
-                        },
-                      ]}>
-                      <MediaArtwork
-                        uri={bmArtwork}
-                        icon="heart"
-                        iconSize={20}
-                        iconColor={colors.semantic.error}
-                        borderRadius={radius.xs + 2}
-                        style={StyleSheet.absoluteFill}
-                      />
-                    </View>
-                    <View style={styles.bookmarkCopy}>
-                      <AppText variant="label" numberOfLines={1}>
-                        {bm.at}
-                      </AppText>
-                      <AppText variant="caption" tone="secondary" numberOfLines={1}>
-                        {bm.note}
-                      </AppText>
-                      <View style={styles.bookmarkBottomRow}>
-                        <SimbaIcon
-                          name="clock-outline"
-                          size={12}
-                          color={colors.accent.gold}
-                        />
-                        <AppText variant="labelSmall" tone="gold">
-                          {bm.positionLabel}
-                        </AppText>
-                      </View>
-                    </View>
-                  </Surface>
-                </Pressable>
-                );
-              })}
-            </Rail>
-          </>
-        ) : null}
-
-        {/* 5b. Favorite Stations (Radio) — square avatar rail matching Your Subscriptions */}
-        {resolvedFavoriteRadio.length > 0 ? (
-          <>
-            <SectionHeader
-              icon="radio-tower"
-              title="Favorite Stations"
-              action={`All (${favoriteRadioIds.length})`}
-              onAction={() => router.push('/library?tab=stations')}
+              title="Pinned Favorites"
+              action={`All (${favorites.length})`}
+              onAction={() => router.push('/library?tab=favorites')}
             />
             <Rail gap={12} padding={spacing.lg}>
-              {resolvedFavoriteRadio.map(st => (
+              {pinnedFavorites.map(fav => {
+                const st = fav.item;
+                return (
                 <Pressable
-                  key={st.id}
+                  key={fav.itemId}
                   onPress={() => openDetail(st)}
                   accessibilityRole="button"
                   style={styles.subPodcastCol}>
@@ -563,55 +455,16 @@ export function HomeScreen() {
                     style={styles.subPodcastTitle}>
                     {st.title}
                   </AppText>
-                </Pressable>
-              ))}
-            </Rail>
-          </>
-        ) : null}
-
-        {/* 5b-2. Favorite Channels (Live TV) — square avatar rail matching Your Subscriptions */}
-        {resolvedFavoriteChannels.length > 0 ? (
-          <>
-            <SectionHeader
-              icon="access-point"
-              title="Favorite Channels"
-              action={`All (${favoriteTvIds.length})`}
-              onAction={() => router.push('/library?tab=channels')}
-            />
-            <Rail gap={12} padding={spacing.lg}>
-              {resolvedFavoriteChannels.map(ch => (
-                <Pressable
-                  key={ch.id}
-                  onPress={() => openDetail(ch)}
-                  accessibilityRole="button"
-                  style={styles.subPodcastCol}>
-                  <View
-                    style={[
-                      styles.subPodcastArt,
-                      {
-                        backgroundColor: colors.accent.goldWash,
-                        borderRadius: radius.sm + 2,
-                        borderColor: colors.border.default,
-                        overflow: 'hidden',
-                      },
-                    ]}>
-                    <MediaArtwork
-                      uri={ch.artworkUrl}
-                      icon={ch.icon}
-                      iconSize={24}
-                      iconColor={colors.accent.gold}
-                      borderRadius={radius.sm + 2}
-                      style={StyleSheet.absoluteFill}
-                    />
-                  </View>
                   <AppText
-                    variant="labelSmall"
+                    variant="caption"
+                    tone="tertiary"
                     numberOfLines={1}
                     style={styles.subPodcastTitle}>
-                    {ch.title}
+                    {MEDIA_KIND_LABELS[st.kind]}
                   </AppText>
                 </Pressable>
-              ))}
+                );
+              })}
             </Rail>
           </>
         ) : null}

@@ -14,7 +14,7 @@ import {
   SimbaLogo,
   Surface,
 } from '../ui';
-import {legalPages} from '../../data/dummy';
+import {legalPages} from '../../constants/catalogueConfig';
 
 export interface LegalScreenProps {
   slug?: string;

@@ -18,7 +18,7 @@ import {
   mapRadioStationToItem,
   mapTVMazeShowToItem,
 } from '../infrastructure/api/mappers';
-import type {CatalogueItem, SearchScope} from '../data/dummy';
+import type {CatalogueItem, SearchScope} from '../types/catalogue';
 
 export interface UniversalSearchInput {
   query: string;

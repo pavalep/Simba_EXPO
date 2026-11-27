@@ -21,11 +21,8 @@ import {
   ShimmerBox,
   Surface,
 } from '../ui';
-import {
-  curatedTopics,
-  dailyMixSynthesis,
-  type CuratedMixRecord,
-} from '../../data/dummy';
+import {curatedTopics} from '../../constants/catalogueConfig';
+import type {CuratedMixRecord} from '../../types/catalogue';
 import {MEDIA_KIND_LABELS} from '../../types/media';
 
 export function CuratedMixesScreen() {
@@ -211,15 +208,18 @@ export function CuratedMixesScreen() {
             },
           ]}>
           <View style={styles.heroTopRow}>
-            <Badge label={dailyMixSynthesis.eyebrow} tone="gold" />
+            <Badge label="DAILY MIX" tone="gold" />
             <AppText variant="caption" tone="tertiary">
               {`${recommendedTracks.length} titles`}
             </AppText>
           </View>
 
-          <AppText variant="h2">{dailyMixSynthesis.title}</AppText>
+          <AppText variant="h2">
+            {sortedMixes[0]?.title ?? 'Today’s Handpicked Mix'}
+          </AppText>
           <AppText variant="body" tone="secondary">
-            {dailyMixSynthesis.narrative}
+            {sortedMixes[0]?.subtitle ??
+              'Live cinema, independent music, podcasts, and radio gathered from your selected topics.'}
           </AppText>
 
           <Pressable

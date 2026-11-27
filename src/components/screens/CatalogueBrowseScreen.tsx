@@ -28,11 +28,8 @@ import {
   Surface,
   type FilterGroup,
 } from '../ui';
-import {
-  catalogueLanes,
-  type CatalogueItem,
-  type CatalogueLane,
-} from '../../data/dummy';
+import {catalogueLanes} from '../../constants/catalogueConfig';
+import type {CatalogueItem, CatalogueLane} from '../../types/catalogue';
 import {MEDIA_KIND_LABELS} from '../../types/media';
 
 export interface CatalogueBrowseScreenProps {
@@ -60,7 +57,8 @@ export function CatalogueBrowseScreen({
   const {
     addToQueue,
     playNextInQueue,
-    toggleBookmarkItem,
+    isFavorite: isStoreFavorite,
+    toggleFavorite: toggleStoreFavorite,
     podcastsList,
     toggleFollowPodcast,
     favoriteRadioIds,
@@ -769,12 +767,16 @@ export function CatalogueBrowseScreen({
                   setActionItem(null);
                 }}
               />
-            ) : canBookmarkItem(actionItem) ? (
+            ) : !lane.hasFavorites ? (
               <ActionSheetRow
-                icon="bookmark-outline"
-                label="Save Bookmark"
+                icon={isStoreFavorite(actionItem.id) ? 'heart' : 'heart-outline'}
+                label={
+                  isStoreFavorite(actionItem.id)
+                    ? 'Remove from Favorites'
+                    : 'Add to Favorites'
+                }
                 onPress={() => {
-                  toggleBookmarkItem(actionItem);
+                  toggleStoreFavorite(actionItem);
                   setActionItem(null);
                 }}
               />

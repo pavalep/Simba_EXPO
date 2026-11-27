@@ -25,7 +25,7 @@ import {
   resolvePlayableStreamUrl,
 } from '../../infrastructure/api/mappers';
 import {
-  canBookmarkItem,
+  canFavoriteItem,
   getLiveItemById,
   isMetadataOnlyGuide,
   isPodcastShow,
@@ -48,7 +48,7 @@ import {
   Surface,
   UnderlineTabs,
 } from '../ui';
-import type {CatalogueItem, ChapterRow} from '../../data/dummy';
+import type {CatalogueItem, ChapterRow} from '../../types/catalogue';
 import {MEDIA_KIND_LABELS, type MediaKind} from '../../types/media';
 
 /**
@@ -62,7 +62,7 @@ import {MEDIA_KIND_LABELS, type MediaKind} from '../../types/media';
  *   • 05.5 — MusicBrainz Enrichment Match Banner & Playlist Pinning
  */
 
-const TABS = ['Overview', 'Content', 'Notes', 'Reviews'] as const;
+const TABS = ['Overview', 'Content', 'Bookmarks', 'Reviews'] as const;
 type TabKey = (typeof TABS)[number];
 
 function formatDuration(seconds: number): string {
@@ -90,17 +90,16 @@ export function MediaDetailScreen({id}: MediaDetailScreenProps) {
     addToQueue,
     playNextInQueue,
     history,
+    favorites,
+    isFavorite,
+    toggleFavorite,
+    updateFavoriteSnapshot,
     bookmarks,
-    toggleBookmarkItem,
+    removeBookmark,
     updateBookmarkSnapshot,
     podcastsList,
     toggleFollowPodcast,
     updateSubscriptionSnapshot,
-    favoriteRadioIds,
-    toggleFavoriteRadio,
-    favoriteTvIds,
-    toggleFavoriteTv,
-    favoriteStations,
     playlistsList,
     createPlaylist,
     addItemToPlaylist,
@@ -120,6 +119,11 @@ export function MediaDetailScreen({id}: MediaDetailScreenProps) {
       registerLiveItem(fromHistory);
       return fromHistory;
     }
+    const fromFav = favorites.find(f => f.itemId === id);
+    if (fromFav) {
+      registerLiveItem(fromFav.item);
+      return fromFav.item;
+    }
     for (const pl of playlistsList) {
       const fromPl = pl.items?.find(it => it.id === id);
       if (fromPl) {
@@ -135,13 +139,8 @@ export function MediaDetailScreen({id}: MediaDetailScreenProps) {
     if (fromSub) {
       return reconstructItemFromSubscription(fromSub);
     }
-    const fromFavStation = favoriteStations.find(st => st.id === id);
-    if (fromFavStation) {
-      registerLiveItem(fromFavStation);
-      return fromFavStation;
-    }
     return null;
-  }, [id, history, playlistsList, bookmarks, podcastsList, favoriteStations]);
+  }, [id, history, favorites, playlistsList, bookmarks, podcastsList]);
 
   const baseItem: CatalogueItem = useMemo(
     () =>
@@ -224,6 +223,7 @@ export function MediaDetailScreen({id}: MediaDetailScreenProps) {
   useEffect(() => {
     if (hydratedMetaQuery.data?.artworkUrl && resolvedItem) {
       updateBookmarkSnapshot(item);
+      updateFavoriteSnapshot(item);
       if (item.kind === 'podcast') {
         updateSubscriptionSnapshot(item);
       }
@@ -233,6 +233,7 @@ export function MediaDetailScreen({id}: MediaDetailScreenProps) {
     resolvedItem,
     item,
     updateBookmarkSnapshot,
+    updateFavoriteSnapshot,
     updateSubscriptionSnapshot,
   ]);
 
@@ -321,21 +322,16 @@ export function MediaDetailScreen({id}: MediaDetailScreenProps) {
   const [selectedChapter, setSelectedChapter] = useState<ChapterRow | null>(
     null,
   );
-  const [localNotes, setLocalNotes] = useState<{id: string; at: string; body: string}[]>([]);
 
   const isVideo = item.lane === 'video';
   const isGuideOnly = isMetadataOnlyGuide(item);
   const showIsPodcastFeed = isPodcastShow(item);
-  const isLiveChannelOrStation =
-    item.kind === 'radio' || item.kind === 'live-tv';
-  const isFavoriteLive =
-    item.kind === 'radio'
-      ? favoriteRadioIds.includes(item.id)
-      : item.kind === 'live-tv'
-        ? favoriteTvIds.includes(item.id)
-        : false;
-  const allowShowBookmark = canBookmarkItem(item) && !isLiveChannelOrStation;
-  const isBookmarked = bookmarks.some(b => b.itemId === item.id);
+  const allowFavorite = canFavoriteItem(item);
+  const favorited = isFavorite(item.id);
+  const itemBookmarks = useMemo(
+    () => bookmarks.filter(b => b.itemId === item.id),
+    [bookmarks, item.id],
+  );
   const isFollowed = podcastsList.some(
     p => p.title === item.title || item.subtitle?.includes(p.title),
   );
@@ -364,7 +360,11 @@ export function MediaDetailScreen({id}: MediaDetailScreenProps) {
 
   const relatedItems: CatalogueItem[] = [];
 
-  const launchPlayer = (overrideStreamUrl?: unknown, overrideTitle?: string) => {
+  const launchPlayer = (
+    overrideStreamUrl?: unknown,
+    overrideTitle?: string,
+    startPositionSeconds?: number,
+  ) => {
     const cleanUrl =
       typeof overrideStreamUrl === 'string' && overrideStreamUrl.trim().length > 0
         ? overrideStreamUrl
@@ -381,7 +381,12 @@ export function MediaDetailScreen({id}: MediaDetailScreenProps) {
           httpHeaders: cleanHeaders,
         }
       : item;
-    void playCatalogueItem(target);
+    void playCatalogueItem(
+      target,
+      startPositionSeconds != null && startPositionSeconds > 0
+        ? {startPositionSeconds}
+        : undefined,
+    );
     router.push(isVideo ? '/player/video' : '/player/audio');
   };
 
@@ -392,17 +397,6 @@ export function MediaDetailScreen({id}: MediaDetailScreenProps) {
     } else if (y <= 140 && scrolledPastHero) {
       setScrolledPastHero(false);
     }
-  };
-
-  const handleAddQuickNote = () => {
-    setLocalNotes(prev => [
-      {
-        id: 'n-' + Date.now(),
-        at: '14:20',
-        body: `Saved editorial note on "${item.title}" during review.`,
-      },
-      ...prev,
-    ]);
   };
 
   if (!resolvedItem) {
@@ -489,32 +483,14 @@ export function MediaDetailScreen({id}: MediaDetailScreenProps) {
               accessibilityLabel="Play"
             />
           ) : null}
-          {isLiveChannelOrStation ? (
+          {allowFavorite ? (
             <IconButton
-              name={isFavoriteLive ? 'heart' : 'heart-outline'}
+              name={favorited ? 'heart' : 'heart-outline'}
               onMedia={!scrolledPastHero}
-              onPress={() =>
-                item.kind === 'live-tv'
-                  ? toggleFavoriteTv(item)
-                  : toggleFavoriteRadio(item)
-              }
+              onPress={() => toggleFavorite(item)}
               accessibilityLabel={
-                item.kind === 'live-tv'
-                  ? isFavoriteLive
-                    ? 'Remove from Favorite Channels'
-                    : 'Add to Favorite Channels'
-                  : isFavoriteLive
-                    ? 'Remove from Favorite Stations'
-                    : 'Add to Favorite Stations'
+                favorited ? 'Remove from Favorites' : 'Add to Favorites'
               }
-            />
-          ) : null}
-          {allowShowBookmark ? (
-            <IconButton
-              name={isBookmarked ? 'bookmark' : 'bookmark-outline'}
-              onMedia={!scrolledPastHero}
-              onPress={() => toggleBookmarkItem(item)}
-              accessibilityLabel="Toggle bookmark"
             />
           ) : null}
           <IconButton
@@ -865,42 +841,77 @@ export function MediaDetailScreen({id}: MediaDetailScreenProps) {
           </View>
         ) : null}
 
-        {/* TAB 3: Notes — Timestamped Bookmarks & Personal Notes (05.3) */}
-        {tab === 'Notes' ? (
+        {/* TAB 3: Bookmarks — Frozen Player Timestamp Markers for this title */}
+        {tab === 'Bookmarks' ? (
           <View style={[styles.section, {paddingHorizontal: spacing.lg}]}>
             <View style={styles.previewHeadRow}>
               <AppText variant="overline" tone="gold">
-                TIMESTAMPED NOTES & BOOKMARKS
+                {`SAVED MOMENTS (${itemBookmarks.length})`}
               </AppText>
-              <Pressable
-                onPress={handleAddQuickNote}
-                accessibilityRole="button">
-                <AppText variant="labelSmall" tone="gold">
-                  + Add Note at 14:20
-                </AppText>
-              </Pressable>
             </View>
-            {localNotes.map((note, idx) => (
-              <View
-                key={note.id}
-                style={[
-                  styles.noteCard,
-                  {
-                    paddingHorizontal: 0,
-                    paddingVertical: 12,
-                    borderBottomWidth:
-                      idx === localNotes.length - 1
-                        ? 0
-                        : StyleSheet.hairlineWidth,
-                    borderBottomColor: colors.border.subtle,
-                  },
-                ]}>
-                <Badge label={note.at} tone="gold" />
-                <AppText variant="body" style={styles.noteBody}>
-                  {note.body}
+            {itemBookmarks.length === 0 ? (
+              <View style={{paddingVertical: 20, gap: 6}}>
+                <AppText variant="title">No bookmarks for this title yet</AppText>
+                <AppText variant="bodySmall" tone="secondary">
+                  Tap the bookmark icon inside the audio or video player while playing to save exact timestamps here.
                 </AppText>
               </View>
-            ))}
+            ) : (
+              itemBookmarks.map((bm, idx) => (
+                <View
+                  key={bm.id}
+                  style={[
+                    styles.noteCard,
+                    {
+                      paddingHorizontal: 0,
+                      paddingVertical: 12,
+                      borderBottomWidth:
+                        idx === itemBookmarks.length - 1
+                          ? 0
+                          : StyleSheet.hairlineWidth,
+                      borderBottomColor: colors.border.subtle,
+                      alignItems: 'center',
+                    },
+                  ]}>
+                  <Pressable
+                    onPress={() =>
+                      launchPlayer(
+                        undefined,
+                        undefined,
+                        bm.positionSeconds ?? 0,
+                      )
+                    }
+                    accessibilityRole="button"
+                    style={{
+                      flex: 1,
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      gap: 10,
+                    }}>
+                    <Badge
+                      label={
+                        bm.durationLabel
+                          ? `${bm.positionLabel} / ${bm.durationLabel}`
+                          : bm.positionLabel
+                      }
+                      tone="gold"
+                    />
+                    <AppText
+                      variant="body"
+                      numberOfLines={2}
+                      style={styles.noteBody}>
+                      {bm.note || bm.at}
+                    </AppText>
+                  </Pressable>
+                  <IconButton
+                    name="delete-outline"
+                    size={18}
+                    onPress={() => removeBookmark(bm.id)}
+                    accessibilityLabel="Delete bookmark"
+                  />
+                </View>
+              ))
+            )}
           </View>
         ) : null}
 
@@ -970,10 +981,12 @@ export function MediaDetailScreen({id}: MediaDetailScreenProps) {
               />
               {!selectedChapter ? (
                 <SheetMenuRow
-                  icon={isBookmarked ? 'bookmark-check' : 'bookmark-outline'}
-                  label={isBookmarked ? 'Remove Bookmark' : 'Bookmark Show'}
+                  icon={favorited ? 'heart' : 'heart-outline'}
+                  label={
+                    favorited ? 'Remove from Favorites' : 'Add to Favorites'
+                  }
                   onPress={() => {
-                    toggleBookmarkItem(item);
+                    toggleFavorite(item);
                     setActionsVisible(false);
                   }}
                 />
@@ -1016,28 +1029,7 @@ export function MediaDetailScreen({id}: MediaDetailScreenProps) {
                   setPlaylistOpen(true);
                 }}
               />
-              {isLiveChannelOrStation ? (
-                <SheetMenuRow
-                  icon={isFavoriteLive ? 'heart' : 'heart-outline'}
-                  label={
-                    item.kind === 'live-tv'
-                      ? isFavoriteLive
-                        ? 'Remove from Favorite Channels'
-                        : 'Add to Favorite Channels'
-                      : isFavoriteLive
-                        ? 'Remove from Favorite Stations'
-                        : 'Add to Favorite Stations'
-                  }
-                  onPress={() => {
-                    if (item.kind === 'live-tv') {
-                      toggleFavoriteTv(item);
-                    } else {
-                      toggleFavoriteRadio(item);
-                    }
-                    setActionsVisible(false);
-                  }}
-                />
-              ) : showIsPodcastFeed && !selectedChapter ? (
+              {showIsPodcastFeed && !selectedChapter ? (
                 <SheetMenuRow
                   icon={isFollowed ? 'check-circle' : 'podcast'}
                   label={isFollowed ? 'Unfollow Podcast' : 'Follow Podcast'}
@@ -1048,13 +1040,13 @@ export function MediaDetailScreen({id}: MediaDetailScreenProps) {
                 />
               ) : (
                 <SheetMenuRow
-                  icon={isBookmarked ? 'bookmark-check' : 'bookmark-outline'}
+                  icon={favorited ? 'heart' : 'heart-outline'}
                   label={
                     selectedChapter
-                      ? 'Bookmark Episode'
-                      : isBookmarked
-                        ? 'Remove Bookmark'
-                        : 'Save Timestamp Bookmark'
+                      ? 'Add Episode to Favorites'
+                      : favorited
+                        ? 'Remove from Favorites'
+                        : 'Add to Favorites'
                   }
                   onPress={() => {
                     if (selectedChapter) {
@@ -1067,9 +1059,9 @@ export function MediaDetailScreen({id}: MediaDetailScreenProps) {
                           (selectedChapter as ChapterRow & {streamUrl?: string})
                             .streamUrl ?? item.streamUrl,
                       };
-                      toggleBookmarkItem(epTarget, item.title);
+                      toggleFavorite(epTarget);
                     } else {
-                      toggleBookmarkItem(item);
+                      toggleFavorite(item);
                     }
                     setActionsVisible(false);
                   }}

@@ -14,7 +14,7 @@ import {
   type MpvChapter,
   type MpvFileInfo,
 } from '@simba-dev/react-native-media-player';
-import type {CatalogueItem, SavedBookmarkRecord} from '../../data/dummy';
+import type {CatalogueItem, SavedBookmarkRecord} from '../../types/catalogue';
 import {useSimbaStore} from '../../state/useSimbaStore';
 import {
   isArchiveDirectoryUrl,
@@ -103,7 +103,71 @@ export function canBookmarkItem(
   if (item.kind === 'live-tv' || item.kind === 'radio') {
     return false;
   }
+  return !isPodcastShow(item) && !isMetadataOnlyGuide(item);
+}
+
+/**
+ * Domain rule: Universal Favorite (`♥`) applies to all standalone items
+ * (movies, music, audiobooks, radio stations, live TV channels, archive items,
+ * TV show guides, podcast episodes, local files) — everything EXCEPT Podcast
+ * Shows/Feeds, which use Subscribe/Follow instead.
+ */
+export function canFavoriteItem(
+  item: CatalogueItem | null | undefined,
+): boolean {
+  if (!item) {
+    return false;
+  }
   return !isPodcastShow(item);
+}
+
+/**
+ * Formats seconds as `m:ss` or `h:mm:ss` for frozen bookmarks & live resume labels.
+ */
+export function formatTimestampLabel(seconds: number): string {
+  const total = Math.max(0, Math.floor(seconds));
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  if (h > 0) {
+    return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+  }
+  return `${m}:${String(s).padStart(2, '0')}`;
+}
+
+/**
+ * Returns the smart auto-resume timestamp (with a 3s context rewind buffer)
+ * for Jump Back In / Playback History items.
+ *
+ * - Returns `undefined` for Live TV / Live Radio (no seekable timeline).
+ * - Returns `undefined` for completed items (`>= 95%`) so replay starts at 0:00.
+ * - Returns `undefined` for short music tracks (`< 6 min`) so songs replay cleanly.
+ */
+export function getSmartResumeSeconds(
+  item: CatalogueItem | null | undefined,
+): number | undefined {
+  if (!item) {
+    return undefined;
+  }
+  if (item.kind === 'live-tv' || item.kind === 'radio') {
+    return undefined;
+  }
+  if (item.completed) {
+    return undefined;
+  }
+  const elapsed = item.elapsedSeconds ?? 0;
+  if (elapsed < 5) {
+    return undefined;
+  }
+  if (
+    item.kind === 'music' &&
+    item.durationSeconds != null &&
+    item.durationSeconds > 0 &&
+    item.durationSeconds < 360
+  ) {
+    return undefined;
+  }
+  return Math.max(0, Math.floor(elapsed) - 3);
 }
 
 /**
@@ -256,13 +320,19 @@ export function reconstructItemFromSubscription(pod: {
   return reconstructed;
 }
 
-// ─── Pending Video Stream Cache ─────────────────────────────────────────────
+// ─── Pending Video Stream & Initial Seek Caches ─────────────────────────────
 // Video streams load once `<SimbaVideo>` surface is mounted in VideoPlayerScreen.
 let pendingVideoLoad: {
   itemId: string;
   url: string;
   title: string;
   headers?: Record<string, string>;
+} | null = null;
+
+// Initial seek target staged when launching from a frozen Bookmark or Jump Back In resume.
+let pendingSeekTarget: {
+  itemId: string;
+  positionSeconds: number;
 } | null = null;
 
 export function getPendingVideoLoad() {
@@ -273,6 +343,32 @@ export function clearPendingVideoLoad(itemId?: string) {
   if (!itemId || pendingVideoLoad?.itemId === itemId) {
     pendingVideoLoad = null;
   }
+}
+
+export function setPendingSeekTarget(itemId: string, positionSeconds: number) {
+  if (positionSeconds > 0) {
+    pendingSeekTarget = {itemId, positionSeconds: Math.floor(positionSeconds)};
+  } else {
+    pendingSeekTarget = null;
+  }
+}
+
+export function peekPendingSeekTarget(itemId?: string | null): number | null {
+  if (!pendingSeekTarget) {
+    return null;
+  }
+  if (itemId && pendingSeekTarget.itemId !== itemId) {
+    return null;
+  }
+  return pendingSeekTarget.positionSeconds;
+}
+
+export function consumePendingSeekTarget(itemId?: string | null): number | null {
+  const pos = peekPendingSeekTarget(itemId);
+  if (pos != null) {
+    pendingSeekTarget = null;
+  }
+  return pos;
 }
 
 const EQ_BAND_FREQS = [60, 230, 910, 3600, 14000] as const;
@@ -291,11 +387,11 @@ export function buildMpvEqFilter(gainsDb: number[]): string {
 
 /**
  * Unified playback hook bridging SIMBA's CatalogueItem domain, live stream URL
- * resolution, `useSimbaDummy` UI state, and `@simba-dev/react-native-media-player`.
+ * resolution, `useSimbaStore` UI state, and `@simba-dev/react-native-media-player`.
  */
 export function useSimbaPlayback() {
   const {state: mpvState, commands} = usePlayer();
-  const dummy = useSimbaStore();
+  const store = useSimbaStore();
   const [resolvingStream, setResolvingStream] = useState(false);
   const [streamError, setStreamError] = useState<string | null>(null);
 
@@ -314,9 +410,22 @@ export function useSimbaPlayback() {
   );
 
   const playCatalogueItem = useCallback(
-    async (item: CatalogueItem): Promise<boolean> => {
+    async (
+      item: CatalogueItem,
+      options?: {startPositionSeconds?: number},
+    ): Promise<boolean> => {
       registerLiveItem(item);
-      dummy.playItem(item);
+      if (
+        options?.startPositionSeconds != null &&
+        options.startPositionSeconds > 0 &&
+        item.kind !== 'live-tv' &&
+        item.kind !== 'radio'
+      ) {
+        setPendingSeekTarget(item.id, options.startPositionSeconds);
+      } else {
+        pendingSeekTarget = null;
+      }
+      store.playItem(item);
       setStreamError(null);
 
       // Fast synchronous path: if the direct stream URL is already known
@@ -366,7 +475,7 @@ export function useSimbaPlayback() {
           httpHeaders: resolved.headers ?? item.httpHeaders,
         };
         registerLiveItem(enriched);
-        dummy.playItem(enriched);
+        store.playItem(enriched);
 
         applyHttpHeaders(enriched.httpHeaders);
 
@@ -394,7 +503,7 @@ export function useSimbaPlayback() {
         return false;
       }
     },
-    [applyHttpHeaders, commands, dummy],
+    [applyHttpHeaders, commands, store],
   );
 
   const stopAndClose = useCallback(() => {
@@ -404,9 +513,9 @@ export function useSimbaPlayback() {
     } catch {
       commands.stop();
     }
-    dummy.setIsPipActive(false);
-    dummy.setDockVisible(false);
-  }, [commands, dummy]);
+    store.setIsPipActive(false);
+    store.setDockVisible(false);
+  }, [commands, store]);
 
   const applyEqualizer = useCallback(
     (gainsDb: number[]) => {

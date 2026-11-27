@@ -1,4 +1,4 @@
-import React, {useCallback, useMemo, useState} from 'react';
+import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import {LayoutChangeEvent, Pressable, StyleSheet, View} from 'react-native';
 import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import {SimbaIcon} from '../ui/SimbaIcon';
@@ -6,6 +6,10 @@ import {useRouter} from 'expo-router';
 import {useTheme} from '../../theme/ThemeProvider';
 import {useSimbaStore} from '../../state/useSimbaStore';
 import {
+  canBookmarkItem,
+  canFavoriteItem,
+  consumePendingSeekTarget,
+  formatTimestampLabel,
   usePlayer,
   usePlayerProgress,
   useSimbaPlayback,
@@ -22,7 +26,7 @@ import {
   Sheet,
   Surface,
 } from '../ui';
-import {eqBands, eqPresets} from '../../data/dummy';
+import {eqBands, eqPresets} from '../../constants/catalogueConfig';
 
 /**
  * FULL-SCREEN AUDIO PLAYER + MORE SHEET + 10-BAND EQUALIZER
@@ -59,12 +63,14 @@ export function AudioPlayerScreen(props: AudioPlayerScreenProps) {
   const {
     nowPlaying,
     queue,
-    isPlaying: dummyIsPlaying,
-    positionSeconds: dummyPositionSeconds,
-    togglePlay: dummyTogglePlay,
-    seekTo: dummySeekTo,
-    bookmarks,
-    toggleBookmarkItem,
+    isPlaying: storeIsPlaying,
+    positionSeconds: storePositionSeconds,
+    togglePlay: storeTogglePlay,
+    seekTo: storeSeekTo,
+    isFavorite,
+    toggleFavorite,
+    addBookmark,
+    updateHistoryProgress,
     eqPreset,
     eqGains,
     selectEqPreset,
@@ -94,7 +100,7 @@ export function AudioPlayerScreen(props: AudioPlayerScreenProps) {
     mpvState.isLoading;
 
   const [scrubFraction, setScrubFraction] = useState<number | null>(null);
-  const isPlaying = hasLiveMpvMedia ? mpvState.isPlaying : dummyIsPlaying;
+  const isPlaying = hasLiveMpvMedia ? mpvState.isPlaying : storeIsPlaying;
   const liveDurationSeconds =
     mpvProgress.durationMs > 0
       ? Math.floor(mpvProgress.durationMs / 1000)
@@ -110,7 +116,7 @@ export function AudioPlayerScreen(props: AudioPlayerScreenProps) {
   const {displayPositionMs, commitOptimisticSeek} = useSmoothPlaybackPosition({
     positionMs: hasLiveMpvMedia
       ? mpvProgress.positionMs
-      : dummyPositionSeconds * 1000,
+      : storePositionSeconds * 1000,
     durationMs,
     isPlaying,
     isBuffering: mpvState.isBuffering || resolvingStream,
@@ -131,7 +137,7 @@ export function AudioPlayerScreen(props: AudioPlayerScreenProps) {
     } else if (nowPlaying) {
       void playCatalogueItem(nowPlaying);
     } else {
-      dummyTogglePlay();
+      storeTogglePlay();
     }
   };
 
@@ -146,7 +152,7 @@ export function AudioPlayerScreen(props: AudioPlayerScreenProps) {
         commitOptimisticSeek(targetMs);
         commands.seek(targetMs);
       } else {
-        dummySeekTo(Math.round(clamped));
+        storeSeekTo(Math.round(clamped));
       }
     },
     [
@@ -155,7 +161,7 @@ export function AudioPlayerScreen(props: AudioPlayerScreenProps) {
       hasLiveMpvMedia,
       commitOptimisticSeek,
       commands,
-      dummySeekTo,
+      storeSeekTo,
     ],
   );
 
@@ -205,6 +211,63 @@ export function AudioPlayerScreen(props: AudioPlayerScreenProps) {
   const [eqOpen, setEqOpen] = useState(false);
   const [volume, setVolume] = useState(0.76);
   const [volumeWidth, setVolumeWidth] = useState(240);
+  const [hudToast, setHudToast] = useState<string | null>(null);
+  const hudTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const showHudToast = useCallback((msg: string) => {
+    setHudToast(msg);
+    if (hudTimerRef.current) {
+      clearTimeout(hudTimerRef.current);
+    }
+    hudTimerRef.current = setTimeout(() => setHudToast(null), 1600);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (hudTimerRef.current) {
+        clearTimeout(hudTimerRef.current);
+      }
+    };
+  }, []);
+
+  // Apply initial seek when opened from a frozen Bookmark or Jump Back In resume
+  useEffect(() => {
+    if (!nowPlaying || isLiveRadio) {
+      return;
+    }
+    if (mpvProgress.durationMs <= 0 && !mpvState.isPlaying) {
+      return;
+    }
+    const targetSec = consumePendingSeekTarget(nowPlaying.id);
+    if (targetSec != null && targetSec > 0) {
+      seekTo(targetSec);
+    }
+  }, [nowPlaying, isLiveRadio, mpvProgress.durationMs, mpvState.isPlaying, seekTo]);
+
+  // Continuously sync live playback position into Jump Back In / Playback History
+  // (throttled every ~5s while playing + flushed on pause/unmount)
+  const lastSavedPosRef = useRef<number>(-1);
+  const latestPosRef = useRef({id: nowPlaying?.id, pos: positionSeconds, dur: duration, live: isLiveRadio});
+  latestPosRef.current = {id: nowPlaying?.id, pos: positionSeconds, dur: duration, live: isLiveRadio};
+
+  useEffect(() => {
+    if (!nowPlaying || isLiveRadio || positionSeconds <= 0) {
+      return;
+    }
+    if (!isPlaying || Math.abs(positionSeconds - lastSavedPosRef.current) >= 5) {
+      lastSavedPosRef.current = positionSeconds;
+      updateHistoryProgress(nowPlaying.id, positionSeconds, duration > 0 ? duration : undefined);
+    }
+  }, [nowPlaying, isLiveRadio, isPlaying, positionSeconds, duration, updateHistoryProgress]);
+
+  useEffect(() => {
+    return () => {
+      const snap = latestPosRef.current;
+      if (snap.id && !snap.live && snap.pos > 0) {
+        updateHistoryProgress(snap.id, snap.pos, snap.dur > 0 ? snap.dur : undefined);
+      }
+    };
+  }, [updateHistoryProgress]);
 
   const headerContextLabel = isLiveRadio
     ? 'LIVE RADIO'
@@ -214,7 +277,9 @@ export function AudioPlayerScreen(props: AudioPlayerScreenProps) {
         ? 'AUDIOBOOK'
         : 'NOW PLAYING';
 
-  const isBookmarked = bookmarks.some(b => b.itemId === nowPlaying?.id);
+  const favorited = nowPlaying ? isFavorite(nowPlaying.id) : false;
+  const allowFavorite = canFavoriteItem(nowPlaying);
+  const allowBookmark = canBookmarkItem(nowPlaying);
   const progress =
     durationMs > 0
       ? Math.min(1, Math.max(0, shownPositionMs / durationMs))
@@ -248,12 +313,40 @@ export function AudioPlayerScreen(props: AudioPlayerScreenProps) {
           {headerContextLabel}
         </AppText>
         <View style={styles.topRight}>
-          <IconButton
-            name={isBookmarked ? 'bookmark' : 'bookmark-outline'}
-            onPress={() => nowPlaying && toggleBookmarkItem(nowPlaying)}
-            accessibilityLabel="Bookmark timestamp"
-            onMedia
-          />
+          {allowFavorite && nowPlaying ? (
+            <IconButton
+              name={favorited ? 'heart' : 'heart-outline'}
+              onPress={() => {
+                toggleFavorite(nowPlaying);
+                showHudToast(
+                  favorited ? 'Removed from Favorites' : 'Added to Favorites',
+                );
+              }}
+              accessibilityLabel={
+                favorited ? 'Remove from Favorites' : 'Add to Favorites'
+              }
+              onMedia
+            />
+          ) : null}
+          {allowBookmark && nowPlaying ? (
+            <IconButton
+              name="bookmark-outline"
+              onPress={() => {
+                const created = addBookmark(
+                  nowPlaying,
+                  positionSeconds,
+                  duration > 0 ? duration : undefined,
+                );
+                if (created) {
+                  showHudToast(
+                    `Bookmarked at ${formatTimestampLabel(positionSeconds)}`,
+                  );
+                }
+              }}
+              accessibilityLabel="Bookmark this timestamp"
+              onMedia
+            />
+          ) : null}
           <IconButton
             name="playlist-play"
             onPress={() => router.push('/player/queue')}
@@ -277,6 +370,23 @@ export function AudioPlayerScreen(props: AudioPlayerScreenProps) {
           />
         </View>
       </View>
+
+      {hudToast ? (
+        <View
+          pointerEvents="none"
+          style={{
+            alignSelf: 'center',
+            paddingHorizontal: 14,
+            paddingVertical: 6,
+            borderRadius: radius.pill,
+            backgroundColor: colors.background.onMediaPill,
+            marginBottom: 4,
+          }}>
+          <AppText variant="labelSmall" tone="gold">
+            {hudToast}
+          </AppText>
+        </View>
+      ) : null}
 
       {/* 2. 28dp Rounded Artwork Plate (Penpot 06.1) */}
       <View style={styles.artWrap}>
@@ -447,9 +557,20 @@ export function AudioPlayerScreen(props: AudioPlayerScreenProps) {
         {isLiveRadio ? (
           <>
             <IconButton
-              name={isBookmarked ? 'bookmark' : 'bookmark-outline'}
-              onPress={() => nowPlaying && toggleBookmarkItem(nowPlaying)}
-              accessibilityLabel="Bookmark station"
+              name={favorited ? 'heart' : 'heart-outline'}
+              onPress={() => {
+                if (nowPlaying) {
+                  toggleFavorite(nowPlaying);
+                  showHudToast(
+                    favorited
+                      ? 'Removed from Favorites'
+                      : 'Added to Favorites',
+                  );
+                }
+              }}
+              accessibilityLabel={
+                favorited ? 'Remove station from Favorites' : 'Favorite station'
+              }
               onMedia
               size={22}
             />
@@ -695,16 +816,38 @@ export function AudioPlayerScreen(props: AudioPlayerScreenProps) {
               router.push('/player/queue');
             }}
           />
-          <SheetRow
-            icon="bookmark-outline"
-            label={isBookmarked ? 'Bookmarked at 14:20' : 'Bookmark Moment'}
-            onPress={() => {
-              if (nowPlaying) {
-                toggleBookmarkItem(nowPlaying);
-              }
-              setMoreOpen(false);
-            }}
-          />
+          {allowFavorite && nowPlaying ? (
+            <SheetRow
+              icon={favorited ? 'heart' : 'heart-outline'}
+              label={favorited ? 'Remove from Favorites' : 'Add to Favorites'}
+              onPress={() => {
+                toggleFavorite(nowPlaying);
+                showHudToast(
+                  favorited ? 'Removed from Favorites' : 'Added to Favorites',
+                );
+                setMoreOpen(false);
+              }}
+            />
+          ) : null}
+          {allowBookmark && nowPlaying ? (
+            <SheetRow
+              icon="bookmark-outline"
+              label={`Bookmark at ${formatTimestampLabel(positionSeconds)}`}
+              onPress={() => {
+                const created = addBookmark(
+                  nowPlaying,
+                  positionSeconds,
+                  duration > 0 ? duration : undefined,
+                );
+                if (created) {
+                  showHudToast(
+                    `Bookmarked at ${formatTimestampLabel(positionSeconds)}`,
+                  );
+                }
+                setMoreOpen(false);
+              }}
+            />
+          ) : null}
         </View>
       </Sheet>
 

@@ -6,6 +6,7 @@ import {useTheme} from '../../theme/ThemeProvider';
 import {useSimbaStore} from '../../state/useSimbaStore';
 import {
   getLiveItemById,
+  getSmartResumeSeconds,
   reconstructItemFromBookmark,
   registerLiveItem,
   useSimbaPlayback,
@@ -61,11 +62,11 @@ export function SavedScreen({initialTab = 'bookmarks'}: SavedScreenProps) {
       />
       <View style={styles.titleCol}>
         <AppText variant="h2">
-          {isBookmarks ? 'Saved Bookmarks' : 'Playback History'}
+          {isBookmarks ? 'Bookmarks' : 'Playback History'}
         </AppText>
         <AppText variant="caption" tone="secondary">
           {isBookmarks
-            ? `${bookmarks.length} ${bookmarks.length === 1 ? 'item' : 'items'} saved`
+            ? `${bookmarks.length} ${bookmarks.length === 1 ? 'moment' : 'moments'} saved`
             : `${history.length} recently played`}
         </AppText>
       </View>
@@ -109,13 +110,13 @@ export function SavedScreen({initialTab = 'bookmarks'}: SavedScreenProps) {
                   />
                 </View>
                 <AppText variant="h3" style={{textAlign: 'center'}}>
-                  No saved bookmarks yet
+                  No bookmarks yet
                 </AppText>
                 <AppText
                   variant="bodySmall"
                   tone="secondary"
                   style={{textAlign: 'center', maxWidth: 280}}>
-                  Tap the bookmark icon in any player or detail page to save an exact timestamp.
+                  Tap the bookmark icon inside the audio or video player to save exact timestamps.
                 </AppText>
               </View>
             ) : (
@@ -141,7 +142,9 @@ export function SavedScreen({initialTab = 'bookmarks'}: SavedScreenProps) {
                         history.find(h => h.id === bm.itemId) ??
                         reconstructItemFromBookmark(bm);
                       registerLiveItem(target);
-                      void playCatalogueItem(target);
+                      void playCatalogueItem(target, {
+                        startPositionSeconds: bm.positionSeconds ?? 0,
+                      });
                       router.push(
                         target.lane === 'video'
                           ? '/player/video'
@@ -175,7 +178,11 @@ export function SavedScreen({initialTab = 'bookmarks'}: SavedScreenProps) {
                     <View style={styles.rowCopy}>
                       <View style={styles.badgeRow}>
                         <Badge
-                          label={`${bm.positionLabel} / ${bm.durationLabel}`}
+                          label={
+                            bm.durationLabel
+                              ? `${bm.positionLabel} / ${bm.durationLabel}`
+                              : bm.positionLabel
+                          }
                           tone="gold"
                         />
                         <Badge label={bm.sourceLabel} />
@@ -245,7 +252,9 @@ export function SavedScreen({initialTab = 'bookmarks'}: SavedScreenProps) {
                   ]}>
                   <Pressable
                     onPress={() => {
-                      void playCatalogueItem(item);
+                      void playCatalogueItem(item, {
+                        startPositionSeconds: getSmartResumeSeconds(item),
+                      });
                       router.push(
                         item.lane === 'video'
                           ? '/player/video'
@@ -278,7 +287,11 @@ export function SavedScreen({initialTab = 'bookmarks'}: SavedScreenProps) {
                           label={MEDIA_KIND_LABELS[item.kind]}
                           tone="gold"
                         />
-                        {item.elapsedTotalLabel ? (
+                        {item.kind === 'live-tv' || item.kind === 'radio' ? (
+                          <Badge label="LIVE" />
+                        ) : item.completed ? (
+                          <Badge label="Completed" />
+                        ) : item.elapsedTotalLabel ? (
                           <Badge label={item.elapsedTotalLabel} />
                         ) : null}
                       </View>

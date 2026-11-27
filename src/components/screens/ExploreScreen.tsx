@@ -31,8 +31,8 @@ import {
 import {
   catalogueLanes,
   curatedSuggestionPool,
-  type CatalogueItem,
-} from '../../data/dummy';
+} from '../../constants/catalogueConfig';
+import type {CatalogueItem} from '../../types/catalogue';
 import {MEDIA_KIND_LABELS} from '../../types/media';
 
 function formatDurationShort(seconds?: number): string {
@@ -64,12 +64,8 @@ export function ExploreScreen() {
     dockVisible,
     recentSearches,
     commitSearchQuery,
-    bookmarks,
-    toggleBookmarkItem,
-    favoriteRadioIds,
-    toggleFavoriteRadio,
-    favoriteTvIds,
-    toggleFavoriteTv,
+    isFavorite,
+    toggleFavorite,
     podcastsList,
     toggleFollowPodcast,
   } = useSimbaStore();
@@ -143,29 +139,14 @@ export function ExploreScreen() {
   }, [livePool]);
 
   const isShowcasePodcast = isPodcastShow(showcaseItem);
-  const isShowcaseLiveTv = showcaseItem?.kind === 'live-tv';
-  const isShowcaseRadio = showcaseItem?.kind === 'radio';
-  const isShowcaseBookmarked = useMemo(
+  const isShowcaseSaved = useMemo(
     () =>
       showcaseItem
         ? isShowcasePodcast
           ? podcastsList.some(p => p.title === showcaseItem.title)
-          : isShowcaseLiveTv
-            ? favoriteTvIds.includes(showcaseItem.id)
-            : isShowcaseRadio
-              ? favoriteRadioIds.includes(showcaseItem.id)
-              : bookmarks.some(b => b.itemId === showcaseItem.id)
+          : isFavorite(showcaseItem.id)
         : false,
-    [
-      bookmarks,
-      podcastsList,
-      favoriteTvIds,
-      favoriteRadioIds,
-      showcaseItem,
-      isShowcasePodcast,
-      isShowcaseLiveTv,
-      isShowcaseRadio,
-    ],
+    [isFavorite, podcastsList, showcaseItem, isShowcasePodcast],
   );
 
   const inlineSuggestions = useMemo(() => {
@@ -540,21 +521,19 @@ export function ExploreScreen() {
                 onPress={() => {
                   if (isShowcasePodcast) {
                     toggleFollowPodcast(showcaseItem);
-                  } else if (isShowcaseLiveTv) {
-                    toggleFavoriteTv(showcaseItem);
-                  } else if (isShowcaseRadio) {
-                    toggleFavoriteRadio(showcaseItem);
                   } else {
-                    toggleBookmarkItem(showcaseItem);
+                    toggleFavorite(showcaseItem);
                   }
                 }}
                 accessibilityRole="button"
                 accessibilityLabel={
                   isShowcasePodcast
-                    ? isShowcaseBookmarked
+                    ? isShowcaseSaved
                       ? 'Unfollow podcast'
                       : 'Follow podcast'
-                    : 'Bookmark featured pick'
+                    : isShowcaseSaved
+                      ? 'Remove from Favorites'
+                      : 'Add to Favorites'
                 }
                 style={[
                   styles.showcaseHeartBtn,
@@ -566,16 +545,16 @@ export function ExploreScreen() {
                 <SimbaIcon
                   name={
                     isShowcasePodcast
-                      ? isShowcaseBookmarked
+                      ? isShowcaseSaved
                         ? 'check-circle'
                         : 'podcast'
-                      : isShowcaseBookmarked
+                      : isShowcaseSaved
                         ? 'heart'
                         : 'heart-outline'
                   }
                   size={17}
                   color={
-                    isShowcaseBookmarked
+                    isShowcaseSaved
                       ? isShowcasePodcast
                         ? colors.accent.gold
                         : colors.semantic.error
@@ -604,14 +583,18 @@ export function ExploreScreen() {
               </AppText>
 
               <View style={styles.showcaseMetaRow}>
-                <SimbaIcon
-                  name="star"
-                  size={14}
-                  color={colors.accent.amber}
-                />
-                <AppText variant="labelSmall" tone="bright">
-                  {`${(showcaseItem.rating ?? 4.9).toFixed(1)} (1,420)`}
-                </AppText>
+                {showcaseItem.rating ? (
+                  <>
+                    <SimbaIcon
+                      name="star"
+                      size={14}
+                      color={colors.accent.amber}
+                    />
+                    <AppText variant="labelSmall" tone="bright">
+                      {showcaseItem.rating.toFixed(1)}
+                    </AppText>
+                  </>
+                ) : null}
                 <SimbaIcon
                   name="clock-outline"
                   size={12}
