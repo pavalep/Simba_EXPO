@@ -231,8 +231,26 @@ export async function signOutFromGoogle(): Promise<void> {
   try {
     const GoogleSignin = getGoogleSignin();
     await GoogleSignin.signOut();
-    await GoogleSignin.revokeAccess();
   } catch {
     // Ignore native sign-out errors; local profile switches back to Guest
+  }
+}
+
+/**
+ * Fully unlinks the connected Google account from Simba Player by revoking
+ * the OAuth grant BEFORE signing out (Google Play Services requires active
+ * session state for revokeAccess()).
+ */
+export async function disconnectGoogleAccount(): Promise<void> {
+  const GoogleSignin = getGoogleSignin();
+  try {
+    await GoogleSignin.revokeAccess();
+  } catch {
+    // Best-effort revoke; proceed with signOut even if offline or already revoked
+  }
+  try {
+    await GoogleSignin.signOut();
+  } catch {
+    // Ignore native sign-out errors
   }
 }

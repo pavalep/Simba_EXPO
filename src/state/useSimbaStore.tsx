@@ -19,6 +19,7 @@ import type {
   SavedBookmarkRecord,
 } from '../types/catalogue';
 import {
+  deleteProfileSnapshot,
   GUEST_PROFILE_ID,
   GUEST_PROFILE_META,
   loadProfileRegistry,
@@ -225,6 +226,7 @@ export interface SimbaState {
   ) => void;
   switchProfile: (profileId: string) => void;
   signOut: () => void;
+  deleteActiveProfileData: () => void;
   preferences: ProfilePreferences;
   updatePreferences: (patch: Partial<ProfilePreferences>) => void;
   selectedTopics: string[];
@@ -635,6 +637,28 @@ export function SimbaStoreProvider({children}: {children: React.ReactNode}) {
   const signOut = useCallback(() => {
     switchProfile(GUEST_PROFILE_ID);
   }, [switchProfile]);
+
+  const deleteActiveProfileData = useCallback(() => {
+    const targetId = activeProfileId;
+    if (targetId === GUEST_PROFILE_ID) {
+      return;
+    }
+    deleteProfileSnapshot(targetId);
+    const remainingProfiles = savedProfiles.filter(p => p.id !== targetId);
+    const normalizedProfiles = remainingProfiles.some(
+      p => p.id === GUEST_PROFILE_ID,
+    )
+      ? remainingProfiles
+      : [GUEST_PROFILE_META, ...remainingProfiles];
+    const guestSnap = loadProfileSnapshot(GUEST_PROFILE_ID, eqPresets.Flat);
+    applySnapshot(guestSnap);
+    setSavedProfiles(normalizedProfiles);
+    setActiveProfileId(GUEST_PROFILE_ID);
+    saveProfileRegistry({
+      activeProfileId: GUEST_PROFILE_ID,
+      profiles: normalizedProfiles,
+    });
+  }, [activeProfileId, savedProfiles, applySnapshot]);
 
   // Silent Google Sign-In restore on app start (non-blocking, offline-safe)
   const silentCheckedRef = useRef(false);
@@ -1341,6 +1365,7 @@ export function SimbaStoreProvider({children}: {children: React.ReactNode}) {
       signInAsProfile,
       switchProfile,
       signOut,
+      deleteActiveProfileData,
       preferences,
       updatePreferences,
       selectedTopics,
@@ -1425,6 +1450,7 @@ export function SimbaStoreProvider({children}: {children: React.ReactNode}) {
       signInAsProfile,
       switchProfile,
       signOut,
+      deleteActiveProfileData,
       preferences,
       updatePreferences,
       selectedTopics,

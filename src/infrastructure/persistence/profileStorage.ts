@@ -193,6 +193,20 @@ export function saveProfileSnapshot(
   }
 }
 
+export function deleteProfileSnapshot(profileId: string): void {
+  if (profileId === GUEST_PROFILE_ID) {
+    return;
+  }
+  try {
+    const file = getProfileDataFile(profileId);
+    if (file.exists) {
+      file.delete();
+    }
+  } catch (err) {
+    console.warn('[profileStorage] deleteProfileSnapshot failed:', err);
+  }
+}
+
 export function makeUserProfileId(email: string): string {
   const clean = email.trim().toLowerCase();
   return `user_${clean.replace(/[^a-z0-9]/g, '_')}`;

@@ -7,10 +7,11 @@ import {useTheme} from '../../theme/ThemeProvider';
 import {useSimbaStore} from '../../state/useSimbaStore';
 import {
   AuthError,
+  disconnectGoogleAccount,
   signInWithGoogle,
   signOutFromGoogle,
 } from '../../services/authService';
-import {AppText, Screen} from '../ui';
+import {AppText, Button, Screen, Sheet} from '../ui';
 
 const AUDIO_QUALITIES = [
   'Lossless (320 kbps)',
@@ -42,6 +43,7 @@ export function ProfileScreen() {
     activeProfile,
     signInAsProfile,
     signOut,
+    deleteActiveProfileData,
     preferences,
     updatePreferences,
     bookmarks,
@@ -55,6 +57,7 @@ export function ProfileScreen() {
   const [cacheCleared, setCacheCleared] = useState(false);
   const [authBusy, setAuthBusy] = useState(false);
   const [authMessage, setAuthMessage] = useState<string | null>(null);
+  const [disconnectSheetOpen, setDisconnectSheetOpen] = useState(false);
 
   const {audioQualityIdx, videoQualityIdx, wifiOnly} = preferences;
 
@@ -91,6 +94,21 @@ export function ProfileScreen() {
     try {
       await signOutFromGoogle();
       signOut();
+    } finally {
+      setAuthBusy(false);
+    }
+  };
+
+  const handleDisconnectGoogle = async () => {
+    if (authBusy) {
+      return;
+    }
+    setDisconnectSheetOpen(false);
+    setAuthBusy(true);
+    setAuthMessage(null);
+    try {
+      await disconnectGoogleAccount();
+      deleteActiveProfileData();
     } finally {
       setAuthBusy(false);
     }
@@ -247,6 +265,16 @@ export function ProfileScreen() {
                 <AppText variant="labelSmall">Switch Account</AppText>
               </Pressable>
             </View>
+            <Pressable
+              onPress={() => setDisconnectSheetOpen(true)}
+              disabled={authBusy}
+              accessibilityRole="button"
+              hitSlop={8}
+              style={{alignSelf: 'flex-start', paddingTop: 2}}>
+              <AppText variant="caption" tone="tertiary">
+                Disconnect Google &amp; clear local account data
+              </AppText>
+            </Pressable>
             {authMessage ? (
               <AppText variant="caption" style={{color: colors.semantic.error}}>
                 {authMessage}
@@ -635,6 +663,26 @@ export function ProfileScreen() {
           </View>
         </View>
       </View>
+      <Sheet
+        visible={disconnectSheetOpen}
+        onClose={() => setDisconnectSheetOpen(false)}
+        title="Disconnect Google Account?"
+        subtitle="Revokes Google access and deletes this profile's local history, favorites, playlists, and bookmarks on this device. Simba stores no data on external servers.">
+        <View style={{gap: 10, paddingTop: 4}}>
+          <Button
+            label="Disconnect & Delete Local Data"
+            variant="primary"
+            onPress={handleDisconnectGoogle}
+            disabled={authBusy}
+          />
+          <Button
+            label="Cancel"
+            variant="secondary"
+            onPress={() => setDisconnectSheetOpen(false)}
+            disabled={authBusy}
+          />
+        </View>
+      </Sheet>
     </Screen>
   );
 }
