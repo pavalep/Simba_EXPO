@@ -9,10 +9,10 @@
     "userInterfaceStyle": "automatic",
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "app.simba.player"
+      "bundleIdentifier": "com.shalabham.simbaplayer"
     },
     "android": {
-      "package": "com.simba.player",
+      "package": "com.shalabham.simbaplayer",
       "permissions": [
         "POST_NOTIFICATIONS",
         "FOREGROUND_SERVICE",

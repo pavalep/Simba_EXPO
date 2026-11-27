@@ -89,7 +89,7 @@ android {
 
     namespace 'app.simba.player'
     defaultConfig {
-        applicationId 'com.simba.player'
+        applicationId 'com.shalabham.simbaplayer'
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1
@@ -104,15 +104,26 @@ android {
             keyAlias 'androiddebugkey'
             keyPassword 'android'
         }
+        release {
+            def keystorePropertiesFile = rootProject.file("keystore.properties")
+            if (keystorePropertiesFile.exists()) {
+                def props = new Properties()
+                keystorePropertiesFile.withInputStream { props.load(it) }
+                storeFile file(props['MYAPP_UPLOAD_STORE_FILE'])
+                storePassword props['MYAPP_UPLOAD_STORE_PASSWORD']
+                keyAlias props['MYAPP_UPLOAD_KEY_ALIAS']
+                keyPassword props['MYAPP_UPLOAD_KEY_PASSWORD']
+            }
+        }
     }
     buildTypes {
         debug {
             signingConfig signingConfigs.debug
         }
         release {
-            // Caution! In production, you need to generate your own keystore file.
-            // see https://reactnative.dev/docs/signed-apk-android.
-            signingConfig signingConfigs.debug
+            signingConfig rootProject.file("keystore.properties").exists()
+                ? signingConfigs.release
+                : signingConfigs.debug
             def enableShrinkResources = findProperty('android.enableShrinkResourcesInReleaseBuilds') ?: 'false'
             shrinkResources enableShrinkResources.toBoolean()
             minifyEnabled enableMinifyInReleaseBuilds

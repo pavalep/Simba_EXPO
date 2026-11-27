@@ -38,6 +38,8 @@ yarn-error.*
 src/constants/env.json
 .mcp.json
 google-services.json
+keystore.properties
+*release*.keystore
 
 # typescript
 *.tsbuildinfo
