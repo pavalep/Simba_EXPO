@@ -8,7 +8,10 @@ import {SimbaPlayer} from '@simba-dev/react-native-media-player';
 import {QueryProvider} from '../providers/QueryProvider';
 import {ThemeProvider, useTheme} from '../theme/ThemeProvider';
 import {SimbaStoreProvider, useSimbaStore} from '../state/useSimbaStore';
-import {useSimbaPlayback} from '../infrastructure/player';
+import {
+  clearPendingTrackSwitch,
+  useSimbaPlayback,
+} from '../infrastructure/player';
 
 /**
  * SIMBA (Expo SDK 58 + expo-router) — Root Layout.
@@ -68,9 +71,36 @@ export default function RootLayout() {
 function MediaSessionQueueBridge() {
   const {nowPlaying, queue} = useSimbaStore();
   const {playCatalogueItem, commands} = useSimbaPlayback();
+  const consecutiveErrorSkipsRef = React.useRef(0);
 
   useEffect(() => {
-    const sub = DeviceEventEmitter.addListener(
+    const advanceToNext = () => {
+      if (!nowPlaying) {
+        return false;
+      }
+      const laneQueue = queue.filter(q => q.lane === nowPlaying.lane);
+      if (laneQueue.length === 0) {
+        return false;
+      }
+      const idx = laneQueue.findIndex(q => q.id === nowPlaying.id);
+      const nextIdx = idx === -1 ? 0 : idx + 1;
+      if (nextIdx >= laneQueue.length) {
+        return false;
+      }
+      const nextItem = laneQueue[nextIdx];
+      if (nextItem && nextItem.id !== nowPlaying.id) {
+        void playCatalogueItem(nextItem);
+        return true;
+      }
+      return false;
+    };
+
+    const loadedSub = DeviceEventEmitter.addListener('onFileLoaded', () => {
+      consecutiveErrorSkipsRef.current = 0;
+      clearPendingTrackSwitch();
+    });
+
+    const actionSub = DeviceEventEmitter.addListener(
       'onMediaSessionAction',
       (payload?: {action?: string}) => {
         const action = payload?.action;
@@ -102,7 +132,27 @@ function MediaSessionQueueBridge() {
         }
       },
     );
-    return () => sub.remove();
+
+    // Auto-advance to the next queued audio or video track on natural EOF (reason === 0),
+    // and auto-skip broken upstream 404/500 tracks (reason === 4) up to 3 in a row.
+    const eofSub = DeviceEventEmitter.addListener(
+      'onEndFile',
+      (payload?: {reason?: number; error?: number}) => {
+        if (payload?.reason === 0 && (payload.error ?? 0) === 0) {
+          consecutiveErrorSkipsRef.current = 0;
+          advanceToNext();
+        } else if (payload?.reason === 4 && consecutiveErrorSkipsRef.current < 3) {
+          consecutiveErrorSkipsRef.current += 1;
+          advanceToNext();
+        }
+      },
+    );
+
+    return () => {
+      loadedSub.remove();
+      actionSub.remove();
+      eofSub.remove();
+    };
   }, [nowPlaying, queue, playCatalogueItem, commands]);
 
   return null;

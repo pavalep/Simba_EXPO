@@ -10,6 +10,7 @@ import {
   canFavoriteItem,
   consumePendingSeekTarget,
   formatTimestampLabel,
+  isTrackSwitchPending,
   usePlayer,
   usePlayerProgress,
   useSimbaPlayback,
@@ -99,19 +100,41 @@ export function AudioPlayerScreen(props: AudioPlayerScreenProps) {
     mpvState.isPlaying ||
     mpvState.isLoading;
 
+  // Track when libmpv has actually loaded the *current* track so stale duration
+  // from the previous track is never shown while switching items.
+  const prevTrackDurationRef = useRef<{id?: string; staleDurMs: number}>({
+    id: nowPlaying?.id,
+    staleDurMs: 0,
+  });
+  if (prevTrackDurationRef.current.id !== nowPlaying?.id) {
+    prevTrackDurationRef.current = {
+      id: nowPlaying?.id,
+      staleDurMs: mpvProgress.durationMs,
+    };
+  }
+  const trackSwitchPending = isTrackSwitchPending(nowPlaying?.id);
+  const hasFreshMpvDuration =
+    mpvProgress.durationMs > 0 &&
+    !mpvState.isLoading &&
+    !resolvingStream &&
+    !trackSwitchPending &&
+    (prevTrackDurationRef.current.staleDurMs === 0 ||
+      mpvProgress.durationMs !== prevTrackDurationRef.current.staleDurMs ||
+      mpvState.isPlaying);
+
   const [scrubFraction, setScrubFraction] = useState<number | null>(null);
   const isPlaying = hasLiveMpvMedia ? mpvState.isPlaying : storeIsPlaying;
-  const liveDurationSeconds =
-    mpvProgress.durationMs > 0
-      ? Math.floor(mpvProgress.durationMs / 1000)
-      : undefined;
+  const liveDurationSeconds = hasFreshMpvDuration
+    ? Math.floor(mpvProgress.durationMs / 1000)
+    : undefined;
 
   const title = props.title ?? nowPlaying?.title ?? 'Now Playing';
   const subtitle = props.subtitle ?? nowPlaying?.subtitle ?? '';
   const duration =
     liveDurationSeconds ?? props.duration ?? nowPlaying?.durationSeconds ?? 0;
-  const durationMs =
-    mpvProgress.durationMs > 0 ? mpvProgress.durationMs : duration * 1000;
+  const durationMs = hasFreshMpvDuration
+    ? mpvProgress.durationMs
+    : duration * 1000;
 
   const {displayPositionMs, commitOptimisticSeek} = useSmoothPlaybackPosition({
     positionMs: hasLiveMpvMedia
@@ -119,7 +142,7 @@ export function AudioPlayerScreen(props: AudioPlayerScreenProps) {
       : storePositionSeconds * 1000,
     durationMs,
     isPlaying,
-    isBuffering: mpvState.isBuffering || resolvingStream,
+    isBuffering: mpvState.isLoading || mpvState.isBuffering || resolvingStream,
     isSeeking: mpvProgress.isSeeking,
     speed: mpvState.speed || 1,
     mediaKey: nowPlaying?.id,
@@ -132,6 +155,15 @@ export function AudioPlayerScreen(props: AudioPlayerScreenProps) {
   const positionSeconds = Math.floor(shownPositionMs / 1000);
 
   const togglePlay = () => {
+    const atEnd =
+      !isLiveRadio &&
+      !isPlaying &&
+      duration > 0 &&
+      positionSeconds >= duration - 2;
+    if (atEnd && nowPlaying) {
+      void playCatalogueItem(nowPlaying);
+      return;
+    }
     if (hasLiveMpvMedia) {
       commands.togglePlayPause();
     } else if (nowPlaying) {
@@ -222,6 +254,13 @@ export function AudioPlayerScreen(props: AudioPlayerScreenProps) {
     hudTimerRef.current = setTimeout(() => setHudToast(null), 1600);
   }, []);
 
+  // Surface a clear message when an upstream stream returns 404/500 and cannot load
+  useEffect(() => {
+    if (mpvState.error && !mpvState.isPlaying && !mpvState.isLoading) {
+      showHudToast('Stream unavailable on source — try another track');
+    }
+  }, [mpvState.error, mpvState.isPlaying, mpvState.isLoading, showHudToast]);
+
   useEffect(() => {
     return () => {
       if (hudTimerRef.current) {
@@ -251,14 +290,14 @@ export function AudioPlayerScreen(props: AudioPlayerScreenProps) {
   latestPosRef.current = {id: nowPlaying?.id, pos: positionSeconds, dur: duration, live: isLiveRadio};
 
   useEffect(() => {
-    if (!nowPlaying || isLiveRadio || positionSeconds <= 0) {
+    if (!nowPlaying || isLiveRadio || positionSeconds <= 0 || trackSwitchPending) {
       return;
     }
     if (!isPlaying || Math.abs(positionSeconds - lastSavedPosRef.current) >= 5) {
       lastSavedPosRef.current = positionSeconds;
       updateHistoryProgress(nowPlaying.id, positionSeconds, duration > 0 ? duration : undefined);
     }
-  }, [nowPlaying, isLiveRadio, isPlaying, positionSeconds, duration, updateHistoryProgress]);
+  }, [nowPlaying, isLiveRadio, isPlaying, positionSeconds, duration, trackSwitchPending, updateHistoryProgress]);
 
   useEffect(() => {
     return () => {
@@ -546,7 +585,7 @@ export function AudioPlayerScreen(props: AudioPlayerScreenProps) {
               {formatTime(positionSeconds)}
             </AppText>
             <AppText variant="mono" tone="mutedOnMedia">
-              {duration > 0 ? `-${formatTime(remaining)}` : '--:--'}
+              {duration > 0 ? formatTime(duration) : '--:--'}
             </AppText>
           </View>
         </View>

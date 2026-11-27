@@ -26,6 +26,7 @@ import {
   consumePendingSeekTarget,
   formatTimestampLabel,
   getPendingVideoLoad,
+  isTrackSwitchPending,
   PIP_CHROME_NATIVE_ID,
   SimbaVideo,
   usePlayer,
@@ -379,11 +380,31 @@ export function VideoPlayerScreen(props: VideoPlayerScreenProps) {
     }
   }, [mpvProgress.positionMs, pendingSeekMs]);
 
+  // Prevent stale duration from a previous video from showing while switching
+  const prevVideoDurationRef = useRef<{id?: string; staleDurMs: number}>({
+    id: nowPlaying?.id,
+    staleDurMs: 0,
+  });
+  if (prevVideoDurationRef.current.id !== nowPlaying?.id) {
+    prevVideoDurationRef.current = {
+      id: nowPlaying?.id,
+      staleDurMs: mpvProgress.durationMs,
+    };
+  }
+  const videoSwitchPending = isTrackSwitchPending(nowPlaying?.id);
+  const hasFreshVideoDuration =
+    mpvProgress.durationMs > 0 &&
+    !mpvState.isLoading &&
+    !resolvingStream &&
+    !videoSwitchPending &&
+    (prevVideoDurationRef.current.staleDurMs === 0 ||
+      mpvProgress.durationMs !== prevVideoDurationRef.current.staleDurMs ||
+      mpvState.isPlaying);
+
   const isPlaying = hasLiveMpvMedia ? mpvState.isPlaying : storeIsPlaying;
-  const durationMs =
-    mpvProgress.durationMs > 0
-      ? mpvProgress.durationMs
-      : (props.duration ?? nowPlaying?.durationSeconds ?? 0) * 1000;
+  const durationMs = hasFreshVideoDuration
+    ? mpvProgress.durationMs
+    : (props.duration ?? nowPlaying?.durationSeconds ?? 0) * 1000;
   const duration = Math.floor(durationMs / 1000);
 
   const {displayPositionMs: smoothPositionMs, commitOptimisticSeek} =
@@ -393,7 +414,7 @@ export function VideoPlayerScreen(props: VideoPlayerScreenProps) {
         : storePositionSeconds * 1000,
       durationMs,
       isPlaying,
-      isBuffering: mpvState.isBuffering || resolvingStream,
+      isBuffering: mpvState.isLoading || mpvState.isBuffering || resolvingStream,
       isSeeking: mpvProgress.isSeeking,
       speed: mpvState.speed || 1,
       mediaKey: nowPlaying?.id ?? targetStreamUrl,
@@ -442,6 +463,23 @@ export function VideoPlayerScreen(props: VideoPlayerScreenProps) {
   const isBuffering = showBufferingOverlay;
 
   const handleTogglePlay = useCallback(() => {
+    const atEnd =
+      !isLiveMode &&
+      !isPlaying &&
+      duration > 0 &&
+      positionSeconds >= duration - 2;
+    if (atEnd && targetStreamUrl) {
+      loadedUrlRef.current = null;
+      void commands.openPlayer({
+        uri: targetStreamUrl,
+        title: targetTitle,
+        type: 'video',
+        artist: targetArtist,
+        album: targetAlbum,
+        artworkPath: targetArtwork,
+      });
+      return;
+    }
     if (hasLiveMpvMedia) {
       commands.togglePlayPause();
     } else if (targetStreamUrl) {
@@ -450,11 +488,27 @@ export function VideoPlayerScreen(props: VideoPlayerScreenProps) {
         uri: targetStreamUrl,
         title: targetTitle,
         type: 'video',
+        artist: targetArtist,
+        album: targetAlbum,
+        artworkPath: targetArtwork,
       });
     } else {
       storeTogglePlay();
     }
-  }, [hasLiveMpvMedia, commands, targetStreamUrl, targetTitle, storeTogglePlay]);
+  }, [
+    isLiveMode,
+    isPlaying,
+    duration,
+    positionSeconds,
+    hasLiveMpvMedia,
+    commands,
+    targetStreamUrl,
+    targetTitle,
+    targetArtist,
+    targetAlbum,
+    targetArtwork,
+    storeTogglePlay,
+  ]);
 
   const handleSeekSeconds = useCallback(
     (secs: number) => {
@@ -673,7 +727,7 @@ export function VideoPlayerScreen(props: VideoPlayerScreenProps) {
   };
 
   useEffect(() => {
-    if (!nowPlaying || isLiveMode || positionSeconds <= 0) {
+    if (!nowPlaying || isLiveMode || positionSeconds <= 0 || videoSwitchPending) {
       return;
     }
     if (

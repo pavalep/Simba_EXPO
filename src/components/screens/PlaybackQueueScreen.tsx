@@ -4,6 +4,7 @@ import {SimbaIcon} from '../ui/SimbaIcon';
 import {useRouter} from 'expo-router';
 import {useTheme} from '../../theme/ThemeProvider';
 import {useSimbaStore} from '../../state/useSimbaStore';
+import {useSimbaPlayback} from '../../infrastructure/player';
 import {
   AppText,
   Badge,
@@ -23,12 +24,11 @@ export function PlaybackQueueScreen() {
   const router = useRouter();
   const {
     nowPlaying,
-    isPlaying,
-    togglePlay,
+    isPlaying: storeIsPlaying,
+    togglePlay: storeTogglePlay,
     queue,
     history,
     undoMessage,
-    playItem,
     removeFromQueue,
     moveQueueItem,
     shuffleQueue,
@@ -36,6 +36,23 @@ export function PlaybackQueueScreen() {
     undoQueueAction,
     dismissUndo,
   } = useSimbaStore();
+  const {mpvState, commands, playCatalogueItem} = useSimbaPlayback();
+  const isPlaying =
+    mpvState.isPlaying || mpvState.isLoading
+      ? mpvState.isPlaying
+      : storeIsPlaying;
+  const togglePlay = () => {
+    if (nowPlaying?.streamUrl || mpvState.isPlaying || mpvState.isLoading) {
+      commands.togglePlayPause();
+    } else if (nowPlaying) {
+      void playCatalogueItem(nowPlaying);
+    } else {
+      storeTogglePlay();
+    }
+  };
+  const playItem = (item: Parameters<typeof playCatalogueItem>[0]) => {
+    void playCatalogueItem(item);
+  };
 
   const stickyHeader = (
     <View

@@ -366,6 +366,30 @@ let pendingSeekTarget: {
   positionSeconds: number;
 } | null = null;
 
+// Tracks an in-flight track switch so useSmoothPlaybackPosition starts at the
+// new track's expected position even on a fresh AudioPlayerScreen/VideoPlayerScreen mount.
+let pendingTrackSwitch: {
+  mediaKey: string;
+  initialPosMs: number;
+  at: number;
+} | null = null;
+
+export function isTrackSwitchPending(mediaKey?: string | null): boolean {
+  if (!mediaKey || !pendingTrackSwitch) {
+    return false;
+  }
+  return (
+    pendingTrackSwitch.mediaKey === mediaKey &&
+    Date.now() - pendingTrackSwitch.at < 8000
+  );
+}
+
+export function clearPendingTrackSwitch(mediaKey?: string | null): void {
+  if (!mediaKey || pendingTrackSwitch?.mediaKey === mediaKey) {
+    pendingTrackSwitch = null;
+  }
+}
+
 export function getPendingVideoLoad() {
   return pendingVideoLoad;
 }
@@ -446,18 +470,32 @@ export function useSimbaPlayback() {
       options?: {startPositionSeconds?: number},
     ): Promise<boolean> => {
       registerLiveItem(item);
-      if (
+      const requestedStartSec =
         options?.startPositionSeconds != null &&
         options.startPositionSeconds > 0 &&
         item.kind !== 'live-tv' &&
         item.kind !== 'radio'
-      ) {
-        setPendingSeekTarget(item.id, options.startPositionSeconds);
+          ? options.startPositionSeconds
+          : 0;
+      if (requestedStartSec > 0) {
+        setPendingSeekTarget(item.id, requestedStartSec);
       } else {
         pendingSeekTarget = null;
       }
+      pendingTrackSwitch = {
+        mediaKey: item.id,
+        initialPosMs: Math.floor(requestedStartSec) * 1000,
+        at: Date.now(),
+      };
       store.playItem(item);
       setStreamError(null);
+      // Stop the previous track immediately so its position ticks never bleed
+      // into the newly selected item's seekbar while the new stream resolves.
+      try {
+        commands.pause();
+      } catch {
+        // Non-fatal if engine is idle
+      }
 
       // Fast synchronous path: if the direct stream URL is already known
       // (prefetched on MediaDetailScreen mount or provided by listing API),
@@ -688,23 +726,45 @@ export function useSmoothPlaybackPosition({
   mediaKey,
 }: SmoothPlaybackPositionOptions) {
   const safeSpeed = speed > 0 && Number.isFinite(speed) ? speed : 1;
-  const anchorRef = useRef({posMs: positionMs, wallMs: Date.now()});
-  const [displayPositionMs, setDisplayPositionMs] = useState(positionMs);
+  const isFreshSwitchOnMount =
+    mediaKey != null &&
+    pendingTrackSwitch != null &&
+    pendingTrackSwitch.mediaKey === mediaKey &&
+    Date.now() - pendingTrackSwitch.at < 8000;
+  const initialMountPosMs = isFreshSwitchOnMount
+    ? pendingTrackSwitch!.initialPosMs
+    : positionMs;
+  const anchorRef = useRef({posMs: initialMountPosMs, wallMs: Date.now()});
+  const [displayPositionMs, setDisplayPositionMs] = useState(initialMountPosMs);
   const [pendingSeekMs, setPendingSeekMs] = useState<number | null>(null);
   const seekFallbackRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastMediaKeyRef = useRef(mediaKey);
+  // Suppresses stale positionMs carried over from the previous track in libmpv
+  // while the newly selected track is still connecting/loading.
+  const staleExpectedStartMsRef = useRef<number | null>(
+    isFreshSwitchOnMount ? pendingTrackSwitch!.initialPosMs : null,
+  );
 
-  // Reset immediately when switching tracks
+  // Reset immediately to expected start (0 for new tracks) when switching tracks
+  // so the seekbar never shows the previous track's elapsed position while loading.
   useEffect(() => {
     if (lastMediaKeyRef.current !== mediaKey) {
       lastMediaKeyRef.current = mediaKey;
-      anchorRef.current = {posMs: positionMs, wallMs: Date.now()};
+      const expectedStart =
+        mediaKey != null &&
+        pendingTrackSwitch != null &&
+        pendingTrackSwitch.mediaKey === mediaKey &&
+        Date.now() - pendingTrackSwitch.at < 8000
+          ? pendingTrackSwitch.initialPosMs
+          : 0;
+      staleExpectedStartMsRef.current = expectedStart;
+      anchorRef.current = {posMs: expectedStart, wallMs: Date.now()};
       setPendingSeekMs(null);
       if (seekFallbackRef.current) {
         clearTimeout(seekFallbackRef.current);
         seekFallbackRef.current = null;
       }
-      setDisplayPositionMs(positionMs);
+      setDisplayPositionMs(expectedStart);
     }
   }, [mediaKey, positionMs]);
 
@@ -715,6 +775,7 @@ export function useSmoothPlaybackPosition({
     }
     if (Math.abs(positionMs - pendingSeekMs) <= SEEK_CONFIRM_TOLERANCE_MS) {
       setPendingSeekMs(null);
+      staleExpectedStartMsRef.current = null;
       if (seekFallbackRef.current) {
         clearTimeout(seekFallbackRef.current);
         seekFallbackRef.current = null;
@@ -728,6 +789,20 @@ export function useSmoothPlaybackPosition({
   useEffect(() => {
     if (pendingSeekMs != null) {
       return;
+    }
+    // Ignore stale position carried over from the previous track after a switch
+    // until libmpv resets near the new track's expected start position.
+    if (staleExpectedStartMsRef.current != null) {
+      if (
+        isBuffering ||
+        Math.abs(positionMs - staleExpectedStartMsRef.current) > 2500
+      ) {
+        return;
+      }
+      staleExpectedStartMsRef.current = null;
+      if (pendingTrackSwitch?.mediaKey === mediaKey) {
+        pendingTrackSwitch = null;
+      }
     }
     const now = Date.now();
     const elapsedWall = now - anchorRef.current.wallMs;
@@ -754,7 +829,13 @@ export function useSmoothPlaybackPosition({
 
   // Smooth 10 Hz tick between native libmpv updates
   useEffect(() => {
-    if (!isPlaying || isBuffering || isSeeking || durationMs <= 0) {
+    if (
+      !isPlaying ||
+      isBuffering ||
+      isSeeking ||
+      durationMs <= 0 ||
+      staleExpectedStartMsRef.current != null
+    ) {
       return;
     }
     anchorRef.current = {
@@ -762,7 +843,7 @@ export function useSmoothPlaybackPosition({
       wallMs: Date.now(),
     };
     const id = setInterval(() => {
-      if (pendingSeekMs != null) {
+      if (pendingSeekMs != null || staleExpectedStartMsRef.current != null) {
         return;
       }
       const elapsed = Date.now() - anchorRef.current.wallMs;
@@ -773,9 +854,9 @@ export function useSmoothPlaybackPosition({
       setDisplayPositionMs(next);
     }, SMOOTH_TICK_MS);
     return () => clearInterval(id);
-    // Intentionally anchor when play/pause/buffering/speed/duration/seek state changes
+    // Intentionally anchor when play/pause/buffering/speed/duration/seek/track state changes
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isPlaying, isBuffering, isSeeking, durationMs, safeSpeed, pendingSeekMs]);
+  }, [isPlaying, isBuffering, isSeeking, durationMs, safeSpeed, pendingSeekMs, mediaKey]);
 
   useEffect(() => {
     return () => {
@@ -799,8 +880,19 @@ export function useSmoothPlaybackPosition({
     }, SEEK_CONFIRM_FALLBACK_MS);
   }, []);
 
+  const isSwitchingMedia = lastMediaKeyRef.current !== mediaKey;
+  const syncExpectedStart =
+    mediaKey != null &&
+    pendingTrackSwitch != null &&
+    pendingTrackSwitch.mediaKey === mediaKey &&
+    Date.now() - pendingTrackSwitch.at < 8000
+      ? pendingTrackSwitch.initialPosMs
+      : 0;
+
   return {
-    displayPositionMs: pendingSeekMs ?? displayPositionMs,
+    displayPositionMs: isSwitchingMedia
+      ? syncExpectedStart
+      : (pendingSeekMs ?? displayPositionMs),
     commitOptimisticSeek,
   };
 }

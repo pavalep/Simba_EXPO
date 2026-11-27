@@ -72,6 +72,7 @@ export function HomeScreen() {
     favorites,
     playlistsList,
     podcastsList,
+    addToQueue,
   } = useSimbaStore();
   const pinnedFavorites = useMemo(
     () => favorites.filter(f => f.pinned),
@@ -171,11 +172,16 @@ export function HomeScreen() {
   };
 
   const handlePlayMix = (mix: CuratedMixRecord) => {
-    const firstId = mix.trackIds[0];
-    const target = firstId ? getLiveItemById(firstId) : undefined;
-    if (target) {
-      handlePlayItem(target);
+    const resolved = mix.trackIds
+      .map(id => getLiveItemById(id))
+      .filter((x): x is CatalogueItem => Boolean(x));
+    if (resolved.length === 0) {
+      return;
     }
+    for (let i = 1; i < resolved.length; i += 1) {
+      addToQueue(resolved[i]);
+    }
+    handlePlayItem(resolved[0]);
   };
 
   const stickyHeader = (
