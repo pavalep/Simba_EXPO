@@ -155,12 +155,14 @@ export function AudioPlayerScreen(props: AudioPlayerScreenProps) {
   const positionSeconds = Math.floor(shownPositionMs / 1000);
 
   const togglePlay = () => {
-    const atEnd =
-      !isLiveRadio &&
-      !isPlaying &&
-      duration > 0 &&
-      positionSeconds >= duration - 2;
-    if (atEnd && nowPlaying) {
+    const needsReload =
+      Boolean(mpvState.error) ||
+      (!isPlaying && !mpvState.isLoading && mpvProgress.positionMs === 0) ||
+      (!isLiveRadio &&
+        !isPlaying &&
+        duration > 0 &&
+        positionSeconds >= duration - 2);
+    if (needsReload && nowPlaying) {
       void playCatalogueItem(nowPlaying);
       return;
     }

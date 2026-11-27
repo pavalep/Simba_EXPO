@@ -463,12 +463,14 @@ export function VideoPlayerScreen(props: VideoPlayerScreenProps) {
   const isBuffering = showBufferingOverlay;
 
   const handleTogglePlay = useCallback(() => {
-    const atEnd =
-      !isLiveMode &&
-      !isPlaying &&
-      duration > 0 &&
-      positionSeconds >= duration - 2;
-    if (atEnd && targetStreamUrl) {
+    const needsReload =
+      Boolean(mpvState.error) ||
+      (!isPlaying && !mpvState.isLoading && mpvProgress.positionMs === 0) ||
+      (!isLiveMode &&
+        !isPlaying &&
+        duration > 0 &&
+        positionSeconds >= duration - 2);
+    if (needsReload && targetStreamUrl) {
       loadedUrlRef.current = null;
       void commands.openPlayer({
         uri: targetStreamUrl,
@@ -496,6 +498,9 @@ export function VideoPlayerScreen(props: VideoPlayerScreenProps) {
       storeTogglePlay();
     }
   }, [
+    mpvState.error,
+    mpvState.isLoading,
+    mpvProgress.positionMs,
     isLiveMode,
     isPlaying,
     duration,
