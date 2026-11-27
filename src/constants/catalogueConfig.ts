@@ -429,12 +429,16 @@ export const legalPages: Record<string, LegalPageInfo> = {
   credits: {
     slug: 'credits',
     title: 'Media Sources & Credits',
-    subtitle: 'Public libraries & independent creators',
+    subtitle: 'Public libraries, Creative Commons & open APIs',
     icon: 'heart-outline',
     sections: [
       {
-        heading: 'Connected Libraries',
-        body: 'Classic movies and recordings from Internet Archive, podcasts via PodcastIndex, music from Jamendo and Audius, audiobooks from LibriVox, live stations from Radio Browser, live channels from IPTV-org, and show guides from TVMaze.',
+        heading: 'Connected Public & Creative Commons APIs',
+        body: '• Internet Archive — Verified Public Domain & Creative Commons films and audio (archive.org)\n• Jamendo — Independent Creative Commons music powered by the Jamendo Developer API (non-commercial use)\n• Audius — Decentralized independent artist music streaming (audius.co)\n• LibriVox — Public Domain (CC0) audiobooks read by volunteers\n• Podcast Index — Open podcast RSS directory\n• Radio Browser — Community-maintained public internet radio directory\n• IPTV-org — Publicly available Free-To-Air (FTA) live broadcast directory (geo-blocked & adult channels excluded)\n• TVMaze — Show metadata & schedules (CC BY-SA, no video streams)\n• Open-Meteo — Local weather data (CC BY 4.0, non-commercial)',
+      },
+      {
+        heading: 'No Media Hosting',
+        body: 'Simba Player is a local media player and open-API client. It does not host, store, or re-broadcast any third-party audio or video streams.',
       },
     ],
   },
@@ -457,12 +461,16 @@ export const legalPages: Record<string, LegalPageInfo> = {
   licenses: {
     slug: 'licenses',
     title: 'Open-Source Acknowledgments',
-    subtitle: 'Community software & creative commons attributions',
+    subtitle: 'Community software & Creative Commons attributions',
     icon: 'scale-balance',
     sections: [
       {
-        heading: 'Community Software',
-        body: 'Built with open-source mobile and media technologies including libmpv and FFmpeg. All public-domain films, books, and Creative Commons tracks belong to their respective creators and archives.',
+        heading: 'Native Playback Engine',
+        body: 'Powered by @simba-dev/react-native-media-player (MIT), bundling libmpv (GPLv2+ / LGPLv2.1+), FFmpeg libraries (LGPLv2.1+), mbedTLS (Apache-2.0), and libc++_shared (Apache-2.0 with LLVM exceptions).',
+      },
+      {
+        heading: 'App Framework & UI',
+        body: 'Built with React Native (MIT), Expo (MIT), TanStack Query (MIT), and Material Community Icons (Apache-2.0). All Public Domain works and Creative Commons tracks belong to their respective creators and archives.',
       },
     ],
   },
@@ -473,20 +481,32 @@ export const legalPages: Record<string, LegalPageInfo> = {
     icon: 'shield-lock-outline',
     sections: [
       {
-        heading: 'Private by Default',
-        body: 'Your playback history, favorites, bookmarks, playlists, and device folders are stored locally on your phone. Sign-in is optional and keeps your profiles cleanly separated.',
+        heading: 'Private by Default (On-Device Only)',
+        body: 'Your playback history, favorites, bookmarks, playlists, and linked device folders are stored locally on your device. Simba Player has no external user database and does not sell or share personal data.',
+      },
+      {
+        heading: 'Optional Google Sign-In & Unlinking',
+        body: 'Google Sign-In is optional and only reads your name, email address, and profile photo to separate local profiles on your device. You can revoke Google access and erase local profile data at any time via Profile → Disconnect Google & clear local account data, or from myaccount.google.com/permissions.',
+      },
+      {
+        heading: 'Optional Location for Weather',
+        body: 'If granted, approximate location is sent only to Open-Meteo to display the local weather greeting on Home and is never stored or tracked.',
       },
     ],
   },
   terms: {
     slug: 'terms',
-    title: 'Terms of Use',
+    title: 'Terms of Use & DMCA',
     subtitle: 'Public domain & independent streaming guidelines',
     icon: 'file-document-outline',
     sections: [
       {
         heading: 'Content Guidelines',
-        body: 'All streaming catalogs in Simba come from public-domain archives, open podcast directories, or Creative Commons artist releases for personal enjoyment.',
+        body: 'Simba Player is a non-commercial local media player and open-API client. All remote catalogs are strictly sourced from verified Public Domain archives, Creative Commons artist platforms, open RSS podcast feeds, and publicly available Free-To-Air directories.',
+      },
+      {
+        heading: 'Copyright & Removal Requests',
+        body: 'Simba Player does not host remote streams. If you are a rights holder and believe a third-party directory entry should be removed from Simba Player, contact our support email listed on the Play Store page with the item identifier or stream URL for prompt removal.',
       },
     ],
   },

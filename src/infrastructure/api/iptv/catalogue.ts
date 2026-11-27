@@ -32,6 +32,30 @@ export interface IPTVCatalogue {
 const UNDEFINED_GROUP = 'undefined';
 
 /**
+ * Categories excluded for Play Store family/content-policy compliance.
+ */
+const EXCLUDED_IPTV_CATEGORIES = new Set(['xxx', 'adult', 'nsfw']);
+
+/**
+ * Exclude geo-blocked, adult, or restricted entries from the public FTA index.
+ */
+function isSafePublicFTAChannel(entry: IPTVM3UEntry, categoryId: string): boolean {
+  if (EXCLUDED_IPTV_CATEGORIES.has(categoryId)) {
+    return false;
+  }
+  const lowerName = entry.name.toLowerCase();
+  if (
+    lowerName.includes('[geo-blocked]') ||
+    lowerName.includes('(geo-blocked)') ||
+    lowerName.includes('xxx') ||
+    lowerName.includes('18+')
+  ) {
+    return false;
+  }
+  return true;
+}
+
+/**
  * Build the catalogue from the parsed playlist and the two name maps.
  *
  * Pure. `categoryNames` is keyed by the category id in lower case
@@ -54,6 +78,9 @@ export function buildIPTVCatalogue(
     const countryCode = countryCodeFromIPTVId(entry.id);
     const group = entry.group.toLowerCase();
     const categoryId = group && group !== UNDEFINED_GROUP ? group : '';
+    if (!isSafePublicFTAChannel(entry, categoryId)) {
+      continue;
+    }
     const category = categoryId ? categoryNames.get(categoryId) ?? '' : '';
 
     if (categoryId) {
@@ -81,6 +108,9 @@ export function buildIPTVCatalogue(
 
   const categories: IPTVCategory[] = [];
   for (const [id, name] of categoryNames) {
+    if (EXCLUDED_IPTV_CATEGORIES.has(id.toLowerCase())) {
+      continue;
+    }
     categories.push({id, name, channelCount: counts.get(id) ?? 0});
   }
 

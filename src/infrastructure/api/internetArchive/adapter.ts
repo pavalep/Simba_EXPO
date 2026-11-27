@@ -695,13 +695,21 @@ export const archiveIdentifierFromUrl = (url: string): string => {
 
 // ─── Service functions (return Promise<DomainType> per contract §2.3) ──
 
-/** Search audio items on the Internet Archive. */
+/**
+ * Play Store copyright compliance filter: restrict all Internet Archive
+ * queries to verified Public Domain, Creative Commons, or open-archive
+ * collections, and explicitly exclude access-restricted / borrow-only items.
+ */
+const PUBLIC_DOMAIN_OR_CC_FILTER =
+  '(licenseurl:*publicdomain* OR licenseurl:*creativecommons* OR collection:(feature_films OR classic_tv OR librivoxaudio OR opensource_movies OR opensource_audio OR etree OR netlabels OR prelinger)) AND NOT access-restricted-item:true';
+
+/** Search audio items on the Internet Archive (Public Domain / CC only). */
 export async function searchInternetArchiveAudio(
   query: string,
   options?: ApiSearchOptions,
   signal?: AbortSignal,
 ): Promise<PaginatedResult<InternetArchiveItemResult>> {
-  const q = `(${query}) AND mediatype:(audio)`;
+  const q = `(${query}) AND mediatype:(audio) AND ${PUBLIC_DOMAIN_OR_CC_FILTER}`;
   const raw = await apiFetch<IASearchResponse>({
     config: API_CONFIG.internetArchive,
     path: '/advancedsearch.php',
@@ -717,13 +725,13 @@ export async function searchInternetArchiveAudio(
   return internetArchiveItemResultsFromRaw(raw);
 }
 
-/** Search music (non-speaking) on the Internet Archive. */
+/** Search music (non-speaking) on the Internet Archive (open-archive only). */
 export async function searchInternetArchiveMusic(
   query: string,
   options?: ApiSearchOptions,
   signal?: AbortSignal,
 ): Promise<PaginatedResult<InternetArchiveItemResult>> {
-  const q = `(${query}) AND mediatype:(audio) AND collection:(etree OR opensource_audio OR netlabels)`;
+  const q = `(${query}) AND mediatype:(audio) AND collection:(etree OR opensource_audio OR netlabels) AND NOT access-restricted-item:true`;
   const raw = await apiFetch<IASearchResponse>({
     config: API_CONFIG.internetArchive,
     path: '/advancedsearch.php',
@@ -792,7 +800,7 @@ export async function searchInternetArchiveVideos(
   options?: ApiSearchOptions,
   signal?: AbortSignal,
 ): Promise<PaginatedResult<InternetArchiveVideoResult>> {
-  const q = `(${query}) AND mediatype:(movies) AND format:("h.264" OR "MPEG4")`;
+  const q = `(${query}) AND mediatype:(movies) AND format:("h.264" OR "MPEG4") AND ${PUBLIC_DOMAIN_OR_CC_FILTER}`;
   const raw = await apiFetch<IAVideoSearchResponse>({
     config: API_CONFIG.internetArchive,
     path: '/advancedsearch.php',
