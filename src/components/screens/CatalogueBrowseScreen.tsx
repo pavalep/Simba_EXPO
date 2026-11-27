@@ -664,7 +664,10 @@ export function CatalogueBrowseScreen({
         visible={actionItem !== null}
         onClose={() => setActionItem(null)}
         title={actionItem?.title}
-        subtitle={actionItem?.subtitle ?? actionItem?.provider}>
+        subtitle={
+          actionItem?.subtitle ||
+          (actionItem ? MEDIA_KIND_LABELS[actionItem.kind] : undefined)
+        }>
         {actionItem ? (
           <View style={styles.sheetMenu}>
             {!isMetadataOnlyGuide(actionItem) ? (

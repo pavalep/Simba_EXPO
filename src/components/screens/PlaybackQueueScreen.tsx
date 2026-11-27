@@ -184,7 +184,7 @@ export function PlaybackQueueScreen() {
                 {nowPlaying.title}
               </AppText>
               <AppText variant="caption" tone="secondary" numberOfLines={1}>
-                {nowPlaying.subtitle ?? nowPlaying.provider}
+                {nowPlaying.subtitle || MEDIA_KIND_LABELS[nowPlaying.kind]}
               </AppText>
             </View>
             <Pressable

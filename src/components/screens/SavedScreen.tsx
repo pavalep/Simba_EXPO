@@ -1,4 +1,4 @@
-import React, {useState} from 'react';
+import React, {useMemo, useState} from 'react';
 import {Pressable, StyleSheet, View} from 'react-native';
 import {SimbaIcon} from '../ui/SimbaIcon';
 import {useRouter} from 'expo-router';
@@ -14,13 +14,22 @@ import {
 import {
   AppText,
   Badge,
+  Chip,
   IconButton,
   MediaArtwork,
+  Rail,
   Screen,
-  Surface,
-  UnderlineTabs,
 } from '../ui';
-import {MEDIA_KIND_LABELS} from '../../types/media';
+import {MEDIA_KIND_LABELS, type MediaKind} from '../../types/media';
+
+const BOOKMARK_FILTER_ORDER: {key: string; label: string; kinds: MediaKind[]}[] = [
+  {key: 'movie', label: 'Movies', kinds: ['movie']},
+  {key: 'music', label: 'Music', kinds: ['music', 'audio']},
+  {key: 'audiobook', label: 'Audiobooks', kinds: ['audiobook']},
+  {key: 'podcast', label: 'Podcasts', kinds: ['podcast']},
+  {key: 'archive', label: 'Archive', kinds: ['archive-audio', 'archive-video']},
+  {key: 'video', label: 'Video', kinds: ['video']},
+];
 
 export interface SavedScreenProps {
   initialTab?: 'bookmarks' | 'history';
@@ -44,6 +53,48 @@ export function SavedScreen({initialTab = 'bookmarks'}: SavedScreenProps) {
 
   const tab = initialTab;
   const isBookmarks = tab === 'bookmarks';
+  const [bmFilter, setBmFilter] = useState<string>('all');
+
+  const resolvedBookmarks = useMemo(
+    () =>
+      bookmarks.map(bm => {
+        const resolvedItem =
+          bm.item ??
+          getLiveItemById(bm.itemId) ??
+          history.find(h => h.id === bm.itemId) ??
+          reconstructItemFromBookmark(bm);
+        return {bm, resolvedItem};
+      }),
+    [bookmarks, history],
+  );
+
+  const activeBookmarkChips = useMemo(() => {
+    const chips: {key: string; label: string}[] = [
+      {key: 'all', label: `All (${resolvedBookmarks.length})`},
+    ];
+    for (const def of BOOKMARK_FILTER_ORDER) {
+      const count = resolvedBookmarks.filter(entry =>
+        def.kinds.includes(entry.resolvedItem.kind),
+      ).length;
+      if (count > 0) {
+        chips.push({key: def.key, label: `${def.label} (${count})`});
+      }
+    }
+    return chips;
+  }, [resolvedBookmarks]);
+
+  const filteredBookmarks = useMemo(() => {
+    if (bmFilter === 'all') {
+      return resolvedBookmarks;
+    }
+    const def = BOOKMARK_FILTER_ORDER.find(d => d.key === bmFilter);
+    if (!def) {
+      return resolvedBookmarks;
+    }
+    return resolvedBookmarks.filter(entry =>
+      def.kinds.includes(entry.resolvedItem.kind),
+    );
+  }, [resolvedBookmarks, bmFilter]);
 
   const stickyHeader = (
     <View
@@ -90,10 +141,23 @@ export function SavedScreen({initialTab = 'bookmarks'}: SavedScreenProps) {
           {padding: spacing.lg, paddingBottom: spacing.lg},
         ]}>
 
-        {/* TAB 1: Saved Bookmarks */}
+        {/* TAB 1: Bookmarks */}
         {tab === 'bookmarks' ? (
-          <View style={[styles.list, {gap: 0}]}>
-            {bookmarks.length === 0 ? (
+          <View style={[styles.list, {gap: 12}]}>
+            {resolvedBookmarks.length > 0 && activeBookmarkChips.length > 2 ? (
+              <Rail gap={8} padding={0}>
+                {activeBookmarkChips.map(ch => (
+                  <Chip
+                    key={ch.key}
+                    label={ch.label}
+                    selected={bmFilter === ch.key}
+                    onPress={() => setBmFilter(ch.key)}
+                  />
+                ))}
+              </Rail>
+            ) : null}
+            <View style={[styles.list, {gap: 0}]}>
+            {filteredBookmarks.length === 0 ? (
               <View style={styles.emptyBox}>
                 <View
                   style={[
@@ -120,7 +184,10 @@ export function SavedScreen({initialTab = 'bookmarks'}: SavedScreenProps) {
                 </AppText>
               </View>
             ) : (
-              bookmarks.map((bm, idx) => (
+              filteredBookmarks.map(({bm, resolvedItem}, idx) => {
+                const kindBadgeLabel =
+                  MEDIA_KIND_LABELS[resolvedItem.kind] ?? 'Media';
+                return (
                 <View
                   key={bm.id}
                   style={[
@@ -129,7 +196,7 @@ export function SavedScreen({initialTab = 'bookmarks'}: SavedScreenProps) {
                       paddingHorizontal: 0,
                       paddingVertical: 14,
                       borderBottomWidth:
-                        idx === bookmarks.length - 1
+                        idx === filteredBookmarks.length - 1
                           ? 0
                           : StyleSheet.hairlineWidth,
                       borderBottomColor: colors.border.subtle,
@@ -137,16 +204,12 @@ export function SavedScreen({initialTab = 'bookmarks'}: SavedScreenProps) {
                   ]}>
                   <Pressable
                     onPress={() => {
-                      const target =
-                        getLiveItemById(bm.itemId) ??
-                        history.find(h => h.id === bm.itemId) ??
-                        reconstructItemFromBookmark(bm);
-                      registerLiveItem(target);
-                      void playCatalogueItem(target, {
+                      registerLiveItem(resolvedItem);
+                      void playCatalogueItem(resolvedItem, {
                         startPositionSeconds: bm.positionSeconds ?? 0,
                       });
                       router.push(
-                        target.lane === 'video'
+                        resolvedItem.lane === 'video'
                           ? '/player/video'
                           : '/player/audio',
                       );
@@ -163,11 +226,7 @@ export function SavedScreen({initialTab = 'bookmarks'}: SavedScreenProps) {
                         },
                       ]}>
                       <MediaArtwork
-                        uri={
-                          bm.item?.artworkUrl ??
-                          getLiveItemById(bm.itemId)?.artworkUrl ??
-                          history.find(h => h.id === bm.itemId)?.artworkUrl
-                        }
+                        uri={resolvedItem.artworkUrl}
                         icon="bookmark-check"
                         iconSize={20}
                         iconColor={colors.brand.onPrimaryContainer}
@@ -177,15 +236,14 @@ export function SavedScreen({initialTab = 'bookmarks'}: SavedScreenProps) {
                     </View>
                     <View style={styles.rowCopy}>
                       <View style={styles.badgeRow}>
+                        <Badge label={kindBadgeLabel} tone="gold" />
                         <Badge
                           label={
                             bm.durationLabel
                               ? `${bm.positionLabel} / ${bm.durationLabel}`
                               : bm.positionLabel
                           }
-                          tone="gold"
                         />
-                        <Badge label={bm.sourceLabel} />
                       </View>
                       <AppText variant="title" numberOfLines={1}>
                         {bm.label}
@@ -202,8 +260,10 @@ export function SavedScreen({initialTab = 'bookmarks'}: SavedScreenProps) {
                     accessibilityLabel={`Delete bookmark ${bm.label}`}
                   />
                 </View>
-              ))
+                );
+              })
             )}
+            </View>
           </View>
         ) : (
           /* TAB 2: Playback History */

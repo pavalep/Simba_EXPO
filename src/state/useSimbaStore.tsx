@@ -9,6 +9,7 @@ import React, {
 } from 'react';
 import type {KindIconName} from '../components/ui';
 import {autoDeleteOptions, eqPresets} from '../constants/catalogueConfig';
+import {MEDIA_KIND_LABELS} from '../types/media';
 import type {
   CatalogueItem,
   CuratedMixRecord,
@@ -962,7 +963,7 @@ export function SimbaStoreProvider({children}: {children: React.ReactNode}) {
         createdAt: Date.now(),
         positionLabel: posLabel,
         durationLabel: durLabel,
-        sourceLabel: item.provider.toUpperCase().slice(0, 10),
+        sourceLabel: MEDIA_KIND_LABELS[item.kind] ?? 'Media',
         icon: 'bookmark-outline',
         item,
       };
