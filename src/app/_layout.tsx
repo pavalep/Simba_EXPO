@@ -1,4 +1,5 @@
-import React from 'react';
+import React, {useEffect} from 'react';
+import {DeviceEventEmitter} from 'react-native';
 import {Stack} from 'expo-router';
 import {StatusBar} from 'expo-status-bar';
 import {useFonts} from 'expo-font';
@@ -6,7 +7,8 @@ import {SafeAreaProvider} from 'react-native-safe-area-context';
 import {SimbaPlayer} from '@simba-dev/react-native-media-player';
 import {QueryProvider} from '../providers/QueryProvider';
 import {ThemeProvider, useTheme} from '../theme/ThemeProvider';
-import {SimbaStoreProvider} from '../state/useSimbaStore';
+import {SimbaStoreProvider, useSimbaStore} from '../state/useSimbaStore';
+import {useSimbaPlayback} from '../infrastructure/player';
 
 /**
  * SIMBA (Expo SDK 58 + expo-router) — Root Layout.
@@ -53,6 +55,7 @@ export default function RootLayout() {
         <ThemeProvider>
           <SimbaPlayer>
             <SimbaStoreProvider>
+              <MediaSessionQueueBridge />
               <ThemedStack />
             </SimbaStoreProvider>
           </SimbaPlayer>
@@ -60,6 +63,49 @@ export default function RootLayout() {
       </QueryProvider>
     </SafeAreaProvider>
   );
+}
+
+function MediaSessionQueueBridge() {
+  const {nowPlaying, queue} = useSimbaStore();
+  const {playCatalogueItem, commands} = useSimbaPlayback();
+
+  useEffect(() => {
+    const sub = DeviceEventEmitter.addListener(
+      'onMediaSessionAction',
+      (payload?: {action?: string}) => {
+        const action = payload?.action;
+        if (!nowPlaying || (action !== 'next' && action !== 'previous')) {
+          return;
+        }
+        const laneQueue = queue.filter(q => q.lane === nowPlaying.lane);
+        if (laneQueue.length === 0) {
+          if (action === 'previous') {
+            commands.seek(0);
+          }
+          return;
+        }
+        const idx = laneQueue.findIndex(q => q.id === nowPlaying.id);
+        if (action === 'next') {
+          const nextIdx = idx === -1 ? 0 : (idx + 1) % laneQueue.length;
+          const nextItem = laneQueue[nextIdx];
+          if (nextItem && nextItem.id !== nowPlaying.id) {
+            void playCatalogueItem(nextItem);
+          }
+        } else {
+          const prevIdx = idx > 0 ? idx - 1 : laneQueue.length - 1;
+          const prevItem = laneQueue[prevIdx];
+          if (prevItem && prevItem.id !== nowPlaying.id) {
+            void playCatalogueItem(prevItem);
+          } else {
+            commands.seek(0);
+          }
+        }
+      },
+    );
+    return () => sub.remove();
+  }, [nowPlaying, queue, playCatalogueItem, commands]);
+
+  return null;
 }
 
 function ThemedStack() {

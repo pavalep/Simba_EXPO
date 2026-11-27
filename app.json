@@ -13,6 +13,11 @@
     },
     "android": {
       "package": "com.simba.player",
+      "permissions": [
+        "POST_NOTIFICATIONS",
+        "FOREGROUND_SERVICE",
+        "FOREGROUND_SERVICE_MEDIA_PLAYBACK"
+      ],
       "adaptiveIcon": {
         "backgroundColor": "#0A0A0C",
         "foregroundImage": "./assets/images/android-icon-foreground.png",

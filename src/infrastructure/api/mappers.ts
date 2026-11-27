@@ -20,6 +20,7 @@ import {
   getInternetArchiveVideoDetails,
 } from './internetArchive/adapter';
 import {getEpisodes} from './podcastIndex/adapter';
+import {getJamendoTrackById} from './jamendo/adapter';
 
 function stripHtml(text?: string | null): string {
   if (!text) {
@@ -301,19 +302,53 @@ async function withRetryOnce<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 /**
+ * Detects stream URLs carrying short-lived signed tokens that return HTTP 403/404
+ * once expired (e.g. Jamendo `storage.jamendo.com/?trackid=...&from=<token>`,
+ * AWS/CloudFront `Expires=`/`Signature=`/`X-Amz-Signature=`). Persisted items
+ * (Jump Back In, Favorites, Bookmarks) re-resolve a fresh URL before playback.
+ */
+export function isExpiringStreamUrl(url?: string): boolean {
+  if (!url) {
+    return false;
+  }
+  if (url.includes('storage.jamendo.com') && url.includes('from=')) {
+    return true;
+  }
+  return /[?&](X-Amz-Signature|Signature|Expires|exp)=/i.test(url);
+}
+
+/**
  * Resolves a direct playable stream URL for items whose listing API does not
  * return a direct media file URL (e.g. Internet Archive movies/audio require
- * a metadata lookup, Podcast Index feeds resolve their latest episode).
+ * a metadata lookup, Podcast Index feeds resolve their latest episode, and
+ * persisted Jamendo tracks need a fresh signed audio URL).
  */
 export async function resolvePlayableStreamUrl(
   item: CatalogueItem,
+  forceRefresh = false,
 ): Promise<{url: string; headers?: Record<string, string>} | null> {
   if (
+    !forceRefresh &&
     item.streamUrl &&
     item.streamUrl.startsWith('http') &&
-    !isArchiveDirectoryUrl(item.streamUrl)
+    !isArchiveDirectoryUrl(item.streamUrl) &&
+    !isExpiringStreamUrl(item.streamUrl)
   ) {
     return {url: item.streamUrl, headers: item.httpHeaders};
+  }
+
+  // Jamendo Track -> fetch fresh signed stream URL
+  if (item.provider === 'Jamendo' || item.id.startsWith('jam-')) {
+    const trackIdNum = Number(item.externalId || item.id.replace(/^jam-/, ''));
+    if (Number.isFinite(trackIdNum) && trackIdNum > 0) {
+      const fresh = await withRetryOnce(() => getJamendoTrackById(trackIdNum));
+      if (fresh?.audioUrl?.startsWith('http')) {
+        return {url: fresh.audioUrl};
+      }
+    }
+    if (item.streamUrl?.startsWith('http')) {
+      return {url: item.streamUrl, headers: item.httpHeaders};
+    }
   }
 
   // Internet Archive Video / Movie

@@ -1,4 +1,5 @@
 import {useCallback, useEffect, useRef, useState} from 'react';
+import {PermissionsAndroid, Platform} from 'react-native';
 import {
   SimbaVideo,
   usePlayer,
@@ -15,9 +16,11 @@ import {
   type MpvFileInfo,
 } from '@simba-dev/react-native-media-player';
 import type {CatalogueItem, SavedBookmarkRecord} from '../../types/catalogue';
+import {MEDIA_KIND_LABELS} from '../../types/media';
 import {useSimbaStore} from '../../state/useSimbaStore';
 import {
   isArchiveDirectoryUrl,
+  isExpiringStreamUrl,
   resolvePlayableStreamUrl,
 } from '../api/mappers';
 import {logger} from '../../lib/logger';
@@ -320,12 +323,40 @@ export function reconstructItemFromSubscription(pod: {
   return reconstructed;
 }
 
+// ─── Android 13+ Notification Permission (once per session) ─────────────────
+let notificationPermRequested = false;
+
+export async function ensureNotificationPermission(): Promise<void> {
+  if (Platform.OS !== 'android' || notificationPermRequested) {
+    return;
+  }
+  notificationPermRequested = true;
+  if (Number(Platform.Version) < 33) {
+    return;
+  }
+  try {
+    const perm = PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS;
+    if (!perm) {
+      return;
+    }
+    const already = await PermissionsAndroid.check(perm);
+    if (!already) {
+      await PermissionsAndroid.request(perm);
+    }
+  } catch {
+    // Non-fatal if activity is unavailable
+  }
+}
+
 // ─── Pending Video Stream & Initial Seek Caches ─────────────────────────────
 // Video streams load once `<SimbaVideo>` surface is mounted in VideoPlayerScreen.
 let pendingVideoLoad: {
   itemId: string;
   url: string;
   title: string;
+  artist?: string;
+  album?: string;
+  artworkPath?: string;
   headers?: Record<string, string>;
 } | null = null;
 
@@ -433,22 +464,59 @@ export function useSimbaPlayback() {
       // stage it immediately with zero async wait so libmpv loads on frame 1.
       const hasDirectUrl =
         typeof item.streamUrl === 'string' &&
-        item.streamUrl.startsWith('http') &&
-        !isArchiveDirectoryUrl(item.streamUrl);
+        (item.streamUrl.startsWith('http') ||
+          item.streamUrl.startsWith('file://') ||
+          item.streamUrl.startsWith('content://')) &&
+        !isArchiveDirectoryUrl(item.streamUrl) &&
+        !isExpiringStreamUrl(item.streamUrl);
 
       if (hasDirectUrl && item.streamUrl) {
+        void ensureNotificationPermission();
         applyHttpHeaders(item.httpHeaders);
+        const artist = item.subtitle || MEDIA_KIND_LABELS[item.kind] || 'Simba';
+        const album = MEDIA_KIND_LABELS[item.kind] || 'Simba';
+        const startPositionMs =
+          options?.startPositionSeconds != null &&
+          options.startPositionSeconds > 0 &&
+          item.kind !== 'live-tv' &&
+          item.kind !== 'radio'
+            ? Math.floor(options.startPositionSeconds) * 1000
+            : 0;
         if (item.lane === 'video') {
           pendingVideoLoad = {
             itemId: item.id,
             url: item.streamUrl,
             title: item.title,
+            artist,
+            album,
+            artworkPath: item.artworkUrl,
             headers: item.httpHeaders,
           };
         } else {
           pendingVideoLoad = null;
-          commands.loadFile(item.streamUrl, item.title);
-          commands.play();
+          commands
+            .openPlayer({
+              uri: item.streamUrl,
+              title: item.title,
+              type: 'audio',
+              artist,
+              album,
+              artworkPath: item.artworkUrl,
+              startPositionMs,
+            })
+            .catch(() => {
+              commands.loadFile(item.streamUrl!, item.title);
+              commands.play();
+              commands.startNotification({
+                title: item.title,
+                artist,
+                album,
+                fileUri: item.streamUrl!,
+                artworkPath: item.artworkUrl,
+                mediaType: 'audio',
+                positionMs: startPositionMs,
+              });
+            });
         }
         setResolvingStream(false);
         return true;
@@ -477,19 +545,53 @@ export function useSimbaPlayback() {
         registerLiveItem(enriched);
         store.playItem(enriched);
 
+        void ensureNotificationPermission();
         applyHttpHeaders(enriched.httpHeaders);
+        const artist = item.subtitle || MEDIA_KIND_LABELS[item.kind] || 'Simba';
+        const album = MEDIA_KIND_LABELS[item.kind] || 'Simba';
+        const startPositionMs =
+          options?.startPositionSeconds != null &&
+          options.startPositionSeconds > 0 &&
+          item.kind !== 'live-tv' &&
+          item.kind !== 'radio'
+            ? Math.floor(options.startPositionSeconds) * 1000
+            : 0;
 
         if (item.lane === 'video') {
           pendingVideoLoad = {
             itemId: item.id,
             url: resolved.url,
             title: item.title,
+            artist,
+            album,
+            artworkPath: item.artworkUrl,
             headers: enriched.httpHeaders,
           };
         } else {
           pendingVideoLoad = null;
-          commands.loadFile(resolved.url, item.title);
-          commands.play();
+          commands
+            .openPlayer({
+              uri: resolved.url,
+              title: item.title,
+              type: 'audio',
+              artist,
+              album,
+              artworkPath: item.artworkUrl,
+              startPositionMs,
+            })
+            .catch(() => {
+              commands.loadFile(resolved.url, item.title);
+              commands.play();
+              commands.startNotification({
+                title: item.title,
+                artist,
+                album,
+                fileUri: resolved.url,
+                artworkPath: item.artworkUrl,
+                mediaType: 'audio',
+                positionMs: startPositionMs,
+              });
+            });
         }
         setResolvingStream(false);
         return true;
@@ -512,6 +614,11 @@ export function useSimbaPlayback() {
       commands.stopPlayback();
     } catch {
       commands.stop();
+    }
+    try {
+      commands.stopNotification();
+    } catch {
+      // Non-fatal if service already stopped
     }
     store.setIsPipActive(false);
     store.setDockVisible(false);

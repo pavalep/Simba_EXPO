@@ -253,8 +253,13 @@ export function VideoPlayerScreen(props: VideoPlayerScreenProps) {
     rawCandidateUrl && !isArchiveDirectoryUrl(rawCandidateUrl)
       ? rawCandidateUrl
       : undefined;
+  const pendingVideo = getPendingVideoLoad();
   const targetTitle =
-    getPendingVideoLoad()?.title ?? props.title ?? nowPlaying?.title ?? 'Simba Video';
+    pendingVideo?.title ?? props.title ?? nowPlaying?.title ?? 'Simba Video';
+  const targetArtist =
+    pendingVideo?.artist ?? props.subtitle ?? nowPlaying?.subtitle ?? 'Simba';
+  const targetAlbum = pendingVideo?.album ?? 'Video';
+  const targetArtwork = pendingVideo?.artworkPath ?? nowPlaying?.artworkUrl;
 
   // If player was opened via MiniPlayerDock or with an unresolved IA directory URL,
   // kick off stream resolution automatically once per item.
@@ -291,6 +296,9 @@ export function VideoPlayerScreen(props: VideoPlayerScreenProps) {
           uri: targetStreamUrl,
           title: targetTitle,
           type: 'video',
+          artist: targetArtist,
+          album: targetAlbum,
+          artworkPath: targetArtwork,
         });
         if (started) {
           loadedUrlRef.current = targetStreamUrl;
@@ -319,7 +327,15 @@ export function VideoPlayerScreen(props: VideoPlayerScreenProps) {
         clearTimeout(timer);
       }
     };
-  }, [commands, targetStreamUrl, targetTitle, nowPlaying?.id]);
+  }, [
+    commands,
+    targetStreamUrl,
+    targetTitle,
+    targetArtist,
+    targetAlbum,
+    targetArtwork,
+    nowPlaying?.id,
+  ]);
 
   // Keep screen awake while video player is open, and always restore portrait
   // + system bars when leaving the player.

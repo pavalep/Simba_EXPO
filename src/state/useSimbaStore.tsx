@@ -31,6 +31,7 @@ import {
   type UserProfileMeta,
 } from '../infrastructure/persistence/profileStorage';
 import {signInSilently} from '../services/authService';
+import {scanDirectoryUri} from '../services/localMediaService';
 import {
   canBookmarkItem,
   canFavoriteItem,
@@ -162,6 +163,13 @@ function hydrateRegistryFromSnapshot(snap: PersistedProfileSnapshot): void {
   }
   if (Array.isArray(snap.favoriteStations)) {
     items.push(...snap.favoriteStations);
+  }
+  if (Array.isArray(snap.linkedFolders)) {
+    for (const fld of snap.linkedFolders) {
+      if (Array.isArray(fld.files)) {
+        items.push(...fld.files);
+      }
+    }
   }
   if (items.length > 0) {
     registerLiveItems(items);
@@ -324,7 +332,17 @@ export interface SimbaState {
   autoDeletePolicy: (typeof autoDeleteOptions)[number];
   setAutoDeletePolicy: (policy: (typeof autoDeleteOptions)[number]) => void;
   linkedFolders: LinkedFolderRecord[];
-  addLinkedFolder: (name: string, path: string) => void;
+  localFiles: CatalogueItem[];
+  addLinkedFolder: (
+    name: string,
+    path: string,
+    extra?: {
+      uri?: string;
+      files?: CatalogueItem[];
+      trackCount?: number;
+      videoCount?: number;
+    },
+  ) => void;
   removeLinkedFolder: (id: string) => void;
   rescanLinkedFolders: () => void;
 }
@@ -1229,19 +1247,61 @@ export function SimbaStoreProvider({children}: {children: React.ReactNode}) {
     setDownloads(prev => prev.filter(d => d.id !== id));
   }, []);
 
-  const addLinkedFolder = useCallback((name: string, path: string) => {
-    setLinkedFolders(prev => [
-      {
-        id: 'fld-' + Date.now(),
-        name: name.trim() || 'New Media Folder',
-        path: path.trim() || '/storage/emulated/0/Media',
-        trackCount: 0,
-        videoCount: 0,
-        lastScanned: 'Connected',
+  const localFiles = useMemo<CatalogueItem[]>(() => {
+    const seen = new Set<string>();
+    const out: CatalogueItem[] = [];
+    for (const fld of linkedFolders) {
+      if (!Array.isArray(fld.files)) {
+        continue;
+      }
+      for (const file of fld.files) {
+        if (!seen.has(file.id)) {
+          seen.add(file.id);
+          out.push(file);
+        }
+      }
+    }
+    return out;
+  }, [linkedFolders]);
+
+  const addLinkedFolder = useCallback(
+    (
+      name: string,
+      path: string,
+      extra?: {
+        uri?: string;
+        files?: CatalogueItem[];
+        trackCount?: number;
+        videoCount?: number;
       },
-      ...prev,
-    ]);
-  }, []);
+    ) => {
+      const files = extra?.files ?? [];
+      if (files.length > 0) {
+        registerLiveItems(files);
+      }
+      const cleanName = name.trim() || 'Phone Folder';
+      const cleanPath = path.trim() || `Phone Storage / ${cleanName}`;
+      setLinkedFolders(prev => {
+        const filtered = extra?.uri
+          ? prev.filter(f => f.uri !== extra.uri)
+          : prev.filter(f => f.path !== cleanPath);
+        return [
+          {
+            id: 'fld-' + Date.now(),
+            name: cleanName,
+            path: cleanPath,
+            uri: extra?.uri,
+            trackCount: extra?.trackCount ?? files.filter(f => f.lane === 'audio').length,
+            videoCount: extra?.videoCount ?? files.filter(f => f.lane === 'video').length,
+            lastScanned: 'Scanned just now',
+            files,
+          },
+          ...filtered,
+        ];
+      });
+    },
+    [],
+  );
 
   const removeLinkedFolder = useCallback((id: string) => {
     setLinkedFolders(prev => prev.filter(f => f.id !== id));
@@ -1249,7 +1309,26 @@ export function SimbaStoreProvider({children}: {children: React.ReactNode}) {
 
   const rescanLinkedFolders = useCallback(() => {
     setLinkedFolders(prev =>
-      prev.map(f => ({...f, lastScanned: 'Scanned just now'})),
+      prev.map(f => {
+        if (!f.uri) {
+          return {...f, lastScanned: 'Checked just now'};
+        }
+        try {
+          const scanned = scanDirectoryUri(f.uri, f.name);
+          if (scanned.files.length > 0) {
+            registerLiveItems(scanned.files);
+          }
+          return {
+            ...f,
+            trackCount: scanned.trackCount,
+            videoCount: scanned.videoCount,
+            files: scanned.files,
+            lastScanned: 'Scanned just now',
+          };
+        } catch {
+          return {...f, lastScanned: 'Unavailable'};
+        }
+      }),
     );
   }, []);
 
@@ -1333,6 +1412,7 @@ export function SimbaStoreProvider({children}: {children: React.ReactNode}) {
       autoDeletePolicy,
       setAutoDeletePolicy,
       linkedFolders,
+      localFiles,
       addLinkedFolder,
       removeLinkedFolder,
       rescanLinkedFolders,
@@ -1412,6 +1492,7 @@ export function SimbaStoreProvider({children}: {children: React.ReactNode}) {
       removeDownload,
       autoDeletePolicy,
       linkedFolders,
+      localFiles,
       addLinkedFolder,
       removeLinkedFolder,
       rescanLinkedFolders,

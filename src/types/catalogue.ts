@@ -144,9 +144,13 @@ export interface LinkedFolderRecord {
   id: string;
   name: string;
   path: string;
+  /** Real Android SAF (`content://`) or `file://` directory URI for rescanning. */
+  uri?: string;
   trackCount: number;
   videoCount: number;
   lastScanned: string;
+  /** Playable local audio & video items scanned from this folder. */
+  files?: CatalogueItem[];
 }
 
 export interface LegalPageInfo {

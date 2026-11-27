@@ -42,16 +42,26 @@ import {MEDIA_KIND_LABELS} from '../../types/media';
 
 type SearchUiState = 'zero' | 'typing' | 'results';
 
-function formatDurationShort(seconds?: number): string {
-  if (!seconds || seconds <= 0) {
+function formatResultMeta(item: CatalogueItem): string {
+  if (item.kind === 'radio' || item.kind === 'live-tv') {
     return 'LIVE';
   }
-  const hrs = Math.floor(seconds / 3600);
-  const mins = Math.floor((seconds % 3600) / 60);
-  if (hrs > 0) {
-    return `${hrs}h ${mins}m`;
+  const seconds = item.durationSeconds;
+  if (seconds && seconds > 0) {
+    const hrs = Math.floor(seconds / 3600);
+    const mins = Math.floor((seconds % 3600) / 60);
+    if (hrs > 0) {
+      return `${hrs}h ${mins}m`;
+    }
+    if (mins > 0) {
+      return `${mins} min`;
+    }
+    return `${Math.round(seconds)}s`;
   }
-  return `${mins} min`;
+  if (item.source === 'local') {
+    return item.meta ? `On Device · ${item.meta}` : 'On Device';
+  }
+  return item.meta || '';
 }
 
 /**
@@ -85,6 +95,7 @@ export function SearchScreen(props: SearchScreenProps = {}) {
     toggleFavorite,
     podcastsList,
     toggleFollowPodcast,
+    localFiles,
   } = useSimbaStore();
   const {playCatalogueItem} = useSimbaPlayback();
 
@@ -205,7 +216,24 @@ export function SearchScreen(props: SearchScreenProps = {}) {
     }
   }, [liveSearch.items]);
 
-  const results = liveSearch.items;
+  const localCatalogueMatches = useMemo(() => {
+    const q = committedQuery.trim().toLowerCase();
+    if (!q || (selectedScope !== 'all' && selectedScope !== 'local')) {
+      return [];
+    }
+    return localFiles.filter(
+      f =>
+        f.title.toLowerCase().includes(q) ||
+        (f.subtitle ?? '').toLowerCase().includes(q),
+    );
+  }, [committedQuery, selectedScope, localFiles]);
+
+  const results = useMemo(() => {
+    if (selectedScope === 'local') {
+      return localCatalogueMatches;
+    }
+    return [...localCatalogueMatches, ...liveSearch.items];
+  }, [selectedScope, localCatalogueMatches, liveSearch.items]);
   const localMatches: LocalFileRecord[] = [];
 
   const searchFilterGroups: FilterGroup[] = useMemo(
@@ -637,17 +665,23 @@ export function SearchScreen(props: SearchScreenProps = {}) {
                         {`${item.subtitle || MEDIA_KIND_LABELS[item.kind]} • ${MEDIA_KIND_LABELS[item.kind]}`}
                       </AppText>
                       <View style={styles.resultMetaRow}>
-                        <SimbaIcon
-                          name="star"
-                          size={13}
-                          color={colors.accent.amber}
-                        />
-                        <AppText variant="labelSmall">
-                          {(item.rating ?? 4.8).toFixed(1)}
-                        </AppText>
-                        <AppText variant="caption" tone="tertiary">
-                          {formatDurationShort(item.durationSeconds)}
-                        </AppText>
+                        {typeof item.rating === 'number' && item.rating > 0 ? (
+                          <>
+                            <SimbaIcon
+                              name="star"
+                              size={13}
+                              color={colors.accent.amber}
+                            />
+                            <AppText variant="labelSmall">
+                              {item.rating.toFixed(1)}
+                            </AppText>
+                          </>
+                        ) : null}
+                        {formatResultMeta(item) ? (
+                          <AppText variant="caption" tone="tertiary">
+                            {formatResultMeta(item)}
+                          </AppText>
+                        ) : null}
                       </View>
                     </View>
 
